@@ -1,0 +1,19 @@
+[package]
+name = "crownsettings"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+blinc_icons = "0.5.1"
+crownconfig = { path = "../crownconfig" }
+crownuikit = { path = "../crownuikit" }
+# Only for naming the bounds `crownconfig`'s load/save need, so this crate can be
+# generic over "some config section" instead of listing every one by hand. No
+# `derive` — the schema types are defined in `crownconfig`.
+serde = "1"
+winit = "0.30.13"
+xilem = "0.4.0"
+
+[profile.dev]
+# See https://doc.rust-lang.org/cargo/reference/profiles.html#split-debuginfo
+split-debuginfo = "unpacked"
