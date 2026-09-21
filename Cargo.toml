@@ -5,14 +5,56 @@ edition = "2024"
 
 [dependencies]
 blinc_icons = "0.5.1"
-crownconfig = { path = "../crownconfig" }
+# Only to enumerate microphones for the Input page — no stream is ever opened
+# here. It is `cpal` specifically because the name this app writes to
+# `input.ron` has to be one crowndictator can reopen, and crowndictator records
+# through `cpal`. Same version it uses. See `src/net/audio.rs`.
+cpal = "0.16"
+crownos-config = { git = "https://github.com/crown-os/crownos-config" }
+# The wallpaper backend's transport: the typed crownpaper protocol plus the
+# `tokio` adapter that drives its socket on xilem's own runtime, the same way
+# `nmrs` drives D-Bus for the Wi-Fi worker.
+crownos-ipc = { path = "../crownos-ipc", features = ["tokio"] }
+# The daemon's own declaration of its protocol, so this client cannot drift
+# from it. Without `daemon` it is the schema alone — none of crownpaper's
+# rendering stack is built here.
+crownpaper = { path = "../crownpaper", default-features = false }
 crownuikit = { path = "../crownuikit" }
-# Only for naming the bounds `crownconfig`'s load/save need, so this crate can be
+# `nmrs` exposes NetworkManager's change signals as a `futures` Stream, and
+# xilem re-exports tokio but not futures — so this is here purely for
+# `StreamExt::next` in the Wi-Fi worker's select loop. Already in the graph as a
+# transitive dependency of `nmrs` itself.
+futures-util = { version = "0.3", default-features = false }
+# Thumbnail decoding for the wallpaper picker, on the blocking pool. The same
+# four formats crownpaper itself decodes, and nothing else — a file the picker
+# offers must be a file the daemon can display.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+# The Wi-Fi backend. Talks to NetworkManager over D-Bus and never leaves
+# `src/net`. Note it also turns on tokio's `macros` feature, which is what makes
+# `xilem::tokio::select!` available — xilem's own tokio dependency does not
+# enable it.
+nmrs = "3.4.2"
+# Only for naming the bounds `crownos-config`'s load/save need, so this crate can be
 # generic over "some config section" instead of listing every one by hand. No
-# `derive` — the schema types are defined in `crownconfig`.
+# `derive` — the schema types are defined in `crownos-config`.
 serde = "1"
+# The Display page talks to the compositor over `zwlr_output_management_v1`
+# on its own Wayland connection — separate from the one winit holds for the
+# window, because the protocol is a session-wide conversation about every
+# monitor rather than anything to do with this app's surface.
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", default-features = false, features = ["client"] }
 winit = "0.30.13"
 xilem = "0.4.0"
+
+# `crownuikit` depends on `crownos-config` by path, and a git dependency and a
+# path dependency on the same crate are two *different* crates as far as cargo is
+# concerned — so `Appearance` from one would not be `Appearance` from the other.
+# Patching the git source to the local checkout keeps one copy in the graph while
+# the two crates are developed side by side. Drop this once the key API here is
+# published and both crates can name the same git revision.
+[patch."https://github.com/crown-os/crownos-config"]
+crownos-config = { path = "../crownos-config" }
 
 [profile.dev]
 # See https://doc.rust-lang.org/cargo/reference/profiles.html#split-debuginfo
