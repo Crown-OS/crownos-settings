@@ -38,6 +38,12 @@ nmrs = "3.4.2"
 # generic over "some config section" instead of listing every one by hand. No
 # `derive` — the schema types are defined in `crownos-config`.
 serde = "1"
+# Present only to turn on tokio's `net` feature, which is what carries
+# `io::unix::AsyncFd` — the Display page's Wayland connection is polled through
+# one. The code reaches tokio through `xilem::tokio` like the rest of `src/net`;
+# this is the same crate, so the feature applies there too. Named here rather
+# than left to `nmrs` because a transitive feature is not a promise.
+tokio = { version = "1", default-features = false, features = ["net"] }
 # The Display page talks to the compositor over `zwlr_output_management_v1`
 # on its own Wayland connection — separate from the one winit holds for the
 # window, because the protocol is a session-wide conversation about every

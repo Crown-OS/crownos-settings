@@ -1,14 +1,14 @@
 //! The Sound page.
 
-use blinc_icons::icons;
-use crownconfig::schema::Sound;
-use crownuikit::layouts::settings::{
+use crate::layout::{
     setting_row, setting_row_desc, setting_row_icon, settings_card_titled, settings_divider,
 };
+use blinc_icons::icons;
+use crownos_config::schema::sound;
 
-use crate::config::ConfigStore;
 use crate::controls::{name_choice, percent_slider, switch};
 use crate::pages::{PageDescriptor, PageView, page};
+use crate::state::Store;
 
 /// Placeholder sinks until there's a real audio backend to enumerate.
 static OUTPUT_DEVICES: &[&str] = &[
@@ -24,12 +24,12 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     build,
 };
 
-fn build(config: &ConfigStore) -> PageView {
-    let sound: &Sound = config.section();
-    let muted = sound.muted;
+fn build(store: &Store) -> PageView {
+    // Muting greys out the output slider without touching the stored level.
+    let muted = store.get(sound::Muted);
 
     page(
-        PAGE.title,
+        &PAGE,
         (
             settings_card_titled(
                 "Output",
@@ -37,25 +37,18 @@ fn build(config: &ConfigStore) -> PageView {
                     setting_row_icon(
                         icons::VOLUME_2,
                         "Output volume",
-                        percent_slider(sound.output_volume, |sound: &mut Sound, level| {
-                            sound.output_volume = level;
-                        })
-                        .disabled(muted),
+                        percent_slider(store, sound::OutputVolume).disabled(muted),
                     ),
                     settings_divider(),
                     setting_row_desc(
                         "Mute",
                         "Silence output without losing the volume level",
-                        switch(muted, |sound: &mut Sound, on| sound.muted = on),
+                        switch(store, sound::Muted),
                     ),
                     settings_divider(),
                     setting_row(
                         "Output device",
-                        name_choice(
-                            OUTPUT_DEVICES,
-                            sound.output_device.as_ref(),
-                            |sound: &mut Sound, device| sound.output_device = Some(device),
-                        ),
+                        name_choice(store, sound::OutputDevice, OUTPUT_DEVICES),
                     ),
                 ),
             ),
@@ -64,9 +57,7 @@ fn build(config: &ConfigStore) -> PageView {
                 (setting_row_icon(
                     icons::MIC,
                     "Input volume",
-                    percent_slider(sound.input_volume, |sound: &mut Sound, level| {
-                        sound.input_volume = level;
-                    }),
+                    percent_slider(store, sound::InputVolume),
                 ),),
             ),
         ),

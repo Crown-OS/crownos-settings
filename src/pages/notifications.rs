@@ -1,14 +1,12 @@
 //! The Notifications page.
 
+use crate::layout::{setting_row_desc, setting_row_icon, settings_card_titled, settings_divider};
 use blinc_icons::icons;
-use crownconfig::schema::Notifications;
-use crownuikit::layouts::settings::{
-    setting_row_desc, setting_row_icon, settings_card_titled, settings_divider,
-};
+use crownos_config::schema::notification;
 
-use crate::config::ConfigStore;
 use crate::controls::switch;
 use crate::pages::{PageDescriptor, PageView, page};
+use crate::state::Store;
 
 pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Notifications",
@@ -16,46 +14,31 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     build,
 };
 
-fn build(config: &ConfigStore) -> PageView {
-    let notifications: &Notifications = config.section();
+fn build(store: &Store) -> PageView {
     // The master switch gates the other two rows.
-    let enabled = notifications.enabled;
+    let enabled = store.get(notification::Enabled);
 
     page(
-        PAGE.title,
+        &PAGE,
         (settings_card_titled(
             "Notifications",
             (
                 setting_row_icon(
                     icons::BELL,
                     "Allow notifications",
-                    switch(enabled, |notifications: &mut Notifications, on| {
-                        notifications.enabled = on;
-                    }),
+                    switch(store, notification::Enabled),
                 ),
                 settings_divider(),
                 setting_row_desc(
                     "Do Not Disturb",
                     "Keep notifications in the tray without banners or sounds",
-                    switch(
-                        notifications.do_not_disturb,
-                        |notifications: &mut Notifications, on| {
-                            notifications.do_not_disturb = on;
-                        },
-                    )
-                    .disabled(!enabled),
+                    switch(store, notification::DoNotDisturb).disabled(!enabled),
                 ),
                 settings_divider(),
                 setting_row_desc(
                     "Show previews",
                     "Include message content in banners",
-                    switch(
-                        notifications.show_previews,
-                        |notifications: &mut Notifications, on| {
-                            notifications.show_previews = on;
-                        },
-                    )
-                    .disabled(!enabled),
+                    switch(store, notification::ShowPreviews).disabled(!enabled),
                 ),
             ),
         ),),

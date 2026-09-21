@@ -874,6 +874,7 @@ dependencies = [
  "image",
  "nmrs",
  "serde",
+ "tokio",
  "wayland-client",
  "wayland-protocols-wlr",
  "winit",

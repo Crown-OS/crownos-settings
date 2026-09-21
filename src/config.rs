@@ -1,24 +1,40 @@
 //! Typed, self-persisting access to the on-disk settings sections.
 //!
-//! [`crownconfig`] speaks in `(section name, value)` pairs and leaves two things
+//! [`crownos_config`] speaks in `(section name, value)` pairs and leaves two things
 //! to its caller: remembering which name goes with which type, and remembering
 //! to save after every edit. This module ties both down.
 //!
-//! * [`Section`] pins a [`crownconfig::schema`] struct to its section name *and*
+//! * [`Section`] pins a [`crownos_config::schema`] struct to its section name *and*
 //!   to its slot in [`ConfigStore`], which is what lets everything above this
 //!   module be generic over "some section" instead of naming all seven.
-//! * [`ConfigStore::update`] is the only way to change a value, and it persists
-//!   what it changed. "Mutate the field but forget to write the file" stops
-//!   being a mistake a caller is able to make.
+//! * [`ConfigStore::set`] and [`ConfigStore::update`] are the only ways to change
+//!   a value, and they persist what they changed. "Mutate the field but forget to
+//!   write the file" stops being a mistake a caller is able to make.
 //!
 //! Adding a section is one line in the [`sections!`] invocation at the bottom of
 //! this file: the store field, the startup load, the [`Section`] impl and the
 //! filesystem watcher are all generated from it.
+//!
+//! # Sections and keys
+//!
+//! Both granularities are in play, and they answer different questions:
+//!
+//! * A **section** is a file. The store mirrors whole sections, so that is what
+//!   [`load`](ConfigStore::load) reads, what [`persist`](ConfigStore::persist)
+//!   writes, and what the watchers adopt.
+//! * A **key** is a field, named by a [`Key`] type that `crownos-config`
+//!   generates from the schema. That is the unit a *control* binds to, through
+//!   [`ConfigStore::get`] and [`ConfigStore::set`] — a toggle is bound to
+//!   `wifi::Enabled`, not to "the `Wifi` section, and by the way the field is
+//!   called `enabled`".
 
 use std::fmt::Debug;
 
-use crownconfig::schema::{Appearance, Bluetooth, Display, Notifications, Power, Sound, Wifi};
-use crownconfig::xilem_view::watch;
+use crownos_config::Key;
+use crownos_config::schema::{
+    Appearance, Bluetooth, Display, Input, Keybinds, Notifications, Power, Sound, Wifi,
+};
+use crownos_config::xilem_view::watch;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use xilem::ViewCtx;
@@ -29,14 +45,14 @@ use xilem::core::{NoElement, ViewSequence};
 /// One settings section: a schema struct stored in exactly one RON file, plus
 /// the knowledge of where it lives inside a [`ConfigStore`].
 ///
-/// The two accessors are the interesting part. `crownconfig`'s schema types
+/// The two accessors are the interesting part. `crownos_config`'s schema types
 /// carry a `SECTION` constant but no trait, so code that wanted to touch "the
 /// section this control belongs to" had to name a concrete field. Implementing
 /// `Section` turns that field access into something generic code can ask for,
 /// which is what collapses seven near-identical `save_*` methods into one
 /// [`ConfigStore::update`].
 ///
-/// The supertraits are the union of what [`crownconfig::load`], [`crownconfig::save`]
+/// The supertraits are the union of what [`crownos_config::load`], [`crownos_config::save`]
 /// and [`watch`] need, so a `Section` can do all three.
 pub trait Section:
     Default + Clone + PartialEq + Debug + Serialize + DeserializeOwned + Send + Sync + 'static
@@ -66,8 +82,40 @@ impl ConfigStore {
         S::slot(self)
     }
 
+    /// The current value of one key.
+    ///
+    /// ```ignore
+    /// let dark_mode: bool = store.get(appearance::DarkMode);
+    /// ```
+    ///
+    /// The `bool` is not a choice this signature made — it is the key's own
+    /// [`Key::Value`], so a control bound to `appearance::DarkMode` cannot be
+    /// handed anything else.
+    pub fn get<K: Key>(&self, key: K) -> K::Value
+    where
+        K::Section: Section,
+    {
+        let _ = key; // Zero-sized: the type is the argument.
+        K::get(self.section::<K::Section>())
+    }
+
+    /// Write one key and persist the section it belongs to.
+    ///
+    /// The [`Key`] carries which section that is, so — unlike [`update`](Self::update)
+    /// — a caller does not name the section at all, and cannot name the wrong one.
+    pub fn set<K: Key>(&mut self, key: K, value: K::Value)
+    where
+        K::Section: Section,
+    {
+        let _ = key;
+        self.update::<K::Section>(|section| K::set(section, value));
+    }
+
     /// Edit a section and write it straight back to disk — there is no separate
     /// "Apply" step anywhere in this app, so the RON file *is* the state.
+    ///
+    /// Prefer [`set`](Self::set) for a single field; this is for the rest: edits
+    /// that touch more than one key, or a whole value at once.
     ///
     /// A write that wouldn't change anything is skipped: sliders emit a value on
     /// every pointer move, and re-serialising an unchanged section would churn
@@ -91,7 +139,7 @@ impl ConfigStore {
     /// Saving is best effort: a read-only config dir shouldn't take the window
     /// down, but it also shouldn't fail silently.
     fn persist<S: Section>(&self) {
-        if let Err(err) = crownconfig::save(S::NAME, S::slot(self)) {
+        if let Err(err) = crownos_config::save(S::NAME, S::slot(self)) {
             eprintln!("crownsettings: could not save {}.ron: {err}", S::NAME);
         }
     }
@@ -103,7 +151,7 @@ impl ConfigStore {
 /// load, one [`Section`] impl per entry, and the set of filesystem watchers that
 /// keeps the store in step with the files.
 ///
-/// Each entry is `field: Type`, where `Type` is a [`crownconfig::schema`] struct.
+/// Each entry is `field: Type`, where `Type` is a [`crownos_config::schema`] struct.
 /// The generated watcher set is a tuple, so this tops out at the 16 elements
 /// xilem's `ViewSequence` implements for tuples — far more sections than a
 /// settings sidebar can reasonably hold.
@@ -123,12 +171,25 @@ macro_rules! sections {
         impl ConfigStore {
             /// Read every section off disk.
             ///
-            /// [`crownconfig::load`] materialises the default file when a
+            /// [`crownos_config::load`] materialises the default file when a
             /// section has never been written, so a fresh install ends up with
             /// all of these RON files on disk.
             pub fn load() -> Self {
                 Self {
-                    $($field: crownconfig::load::<$ty>(<$ty as Section>::NAME),)+
+                    $($field: crownos_config::load::<$ty>(<$ty as Section>::NAME),)+
+                }
+            }
+
+            /// A store of nothing but defaults, for tests that must not touch
+            /// the filesystem.
+            ///
+            /// Not available outside tests on purpose: everywhere else, a store
+            /// is a mirror of files on disk, and one that isn't would silently
+            /// report settings the user does not have.
+            #[cfg(test)]
+            pub fn defaults() -> Self {
+                Self {
+                    $($field: <$ty as Default>::default(),)+
                 }
             }
 
@@ -177,6 +238,8 @@ sections! {
     appearance: Appearance,
     display: Display,
     sound: Sound,
+    input: Input,
+    keybinds: Keybinds,
     notifications: Notifications,
     power: Power,
 }
@@ -184,6 +247,7 @@ sections! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crownos_config::schema::wifi;
 
     /// Something that is definitely not RON, used to prove a write *didn't*
     /// happen: if the store had saved, this would be gone.
@@ -198,9 +262,9 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create temp config dir");
         // SAFETY: single-threaded section of a single test function; no other
         // test in this binary touches the environment.
-        unsafe { std::env::set_var(crownconfig::CONFIG_DIR_ENV, &dir) };
+        unsafe { std::env::set_var(crownos_config::CONFIG_DIR_ENV, &dir) };
 
-        let wifi_path = crownconfig::path_for(Wifi::NAME);
+        let wifi_path = crownos_config::path_for(Wifi::NAME);
 
         // --- every section is materialised on first load -------------------
         let mut store = ConfigStore::load();
@@ -210,11 +274,13 @@ mod tests {
             Appearance::NAME,
             Display::NAME,
             Sound::NAME,
+            Input::NAME,
+            Keybinds::NAME,
             Notifications::NAME,
             Power::NAME,
         ] {
             assert!(
-                crownconfig::path_for(section).exists(),
+                crownos_config::path_for(section).exists(),
                 "load() should materialise {section}.ron"
             );
         }
@@ -224,9 +290,35 @@ mod tests {
         store.update::<Wifi>(|wifi| wifi.network = Some("Workshop".to_owned()));
         assert_eq!(store.section::<Wifi>().network.as_deref(), Some("Workshop"));
         assert_eq!(
-            crownconfig::load::<Wifi>(Wifi::NAME).network.as_deref(),
+            crownos_config::load::<Wifi>(Wifi::NAME).network.as_deref(),
             Some("Workshop"),
             "update() must persist the edit"
+        );
+
+        // --- a key round-trips through the store and the file --------------
+        // Note there is no section named anywhere on these two lines: the key
+        // carries it, and `get` returns the field's own type.
+        store.set(wifi::Enabled, false);
+        let enabled: bool = store.get(wifi::Enabled);
+        assert!(!enabled);
+        assert!(
+            !crownos_config::load::<Wifi>(Wifi::NAME).enabled,
+            "set() must persist the edit"
+        );
+        assert_eq!(
+            store.get(wifi::Network).as_deref(),
+            Some("Workshop"),
+            "setting one key must leave its neighbours alone"
+        );
+        store.set(wifi::Enabled, true);
+
+        // --- a key write that changes nothing doesn't touch the file -------
+        std::fs::write(&wifi_path, SENTINEL).expect("plant sentinel");
+        store.set(wifi::Enabled, true);
+        assert_eq!(
+            std::fs::read(&wifi_path).unwrap(),
+            SENTINEL,
+            "a no-op set must not rewrite the file"
         );
 
         // --- an update that changes nothing doesn't touch the file ---------
@@ -240,7 +332,7 @@ mod tests {
 
         // --- an update that does change something still writes -------------
         store.update::<Wifi>(|wifi| wifi.enabled = false);
-        let on_disk = crownconfig::load::<Wifi>(Wifi::NAME);
+        let on_disk = crownos_config::load::<Wifi>(Wifi::NAME);
         assert!(!on_disk.enabled);
         assert_eq!(on_disk.network.as_deref(), Some("Workshop"));
 
@@ -259,7 +351,10 @@ mod tests {
 
         // --- sections are independent -------------------------------------
         store.update::<Sound>(|sound| sound.output_volume = 77.0);
-        assert_eq!(crownconfig::load::<Sound>(Sound::NAME).output_volume, 77.0);
+        assert_eq!(
+            crownos_config::load::<Sound>(Sound::NAME).output_volume,
+            77.0
+        );
         assert_eq!(
             store.section::<Display>(),
             &Display::default(),
@@ -267,7 +362,7 @@ mod tests {
         );
 
         // SAFETY: as above.
-        unsafe { std::env::remove_var(crownconfig::CONFIG_DIR_ENV) };
+        unsafe { std::env::remove_var(crownos_config::CONFIG_DIR_ENV) };
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

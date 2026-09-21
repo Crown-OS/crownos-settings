@@ -1,22 +1,16 @@
 //! # CrownOS Settings
-//!
-//! A macOS-System-Settings-shaped desktop app: a fixed left sidebar of menu
-//! items and a scrollable right pane showing the selected page's grouped
-//! setting cards.
-//!
-//! Every control writes straight through to [`crownconfig`], so the RON files
-//! in `~/.config/crownos` *are* the app's state — there is no in-app "Apply" step. The
-//! reverse direction works too: a watcher per section lives alongside the view
-//! tree, so hand-editing `~/.config/crownos/display.ron` moves the brightness slider
-//! while the window is open.
-//!
 //! ## Layout
 //!
 //! The modules are stacked so that each one only knows about the one below it:
 //!
 //! * [`config`] — the sections, typed and self-persisting. Knows nothing about UI.
-//! * [`controls`] — widgets pre-wired to a section field. Knows nothing about
-//!   pages.
+//! * [`net`] — the live system backends, one long-lived async worker each.
+//!   Knows nothing about UI either, and no backend crate's types escape it.
+//! * [`state`] — the two of those joined into the one `Store` a page is handed.
+//! * [`layout`] — this app's page/card/row chrome, composed from `crownuikit`'s
+//!   base widgets. Knows nothing about state.
+//! * [`controls`] — widgets pre-wired to a config key, which is what a page names
+//!   to bind one. Knows nothing about pages.
 //! * [`pages`] — one module per sidebar entry, plus the registry that lists them.
 //!   Knows nothing about navigation.
 //! * [`sidebar`], [`app`] — navigation and the root view, the only places that
@@ -29,8 +23,11 @@
 mod app;
 mod config;
 mod controls;
+mod layout;
+mod net;
 mod pages;
 mod sidebar;
+mod state;
 
 use crownuikit::util::INTER_FONT_DATA;
 use winit::dpi::LogicalSize;

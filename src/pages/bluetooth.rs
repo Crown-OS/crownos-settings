@@ -1,14 +1,12 @@
 //! The Bluetooth page.
 
+use crate::layout::{setting_row_desc, setting_row_icon, settings_card_titled, settings_divider};
 use blinc_icons::icons;
-use crownconfig::schema::Bluetooth;
-use crownuikit::layouts::settings::{
-    setting_row_desc, setting_row_icon, settings_card_titled, settings_divider,
-};
+use crownos_config::schema::bluetooth;
 
-use crate::config::ConfigStore;
 use crate::controls::{switch, value_text};
 use crate::pages::{PageDescriptor, PageView, page};
+use crate::state::Store;
 
 pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Bluetooth",
@@ -16,21 +14,19 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     build,
 };
 
-fn build(config: &ConfigStore) -> PageView {
-    let bluetooth: &Bluetooth = config.section();
-    let enabled = bluetooth.enabled;
+fn build(store: &Store) -> PageView {
+    // Reported by the Discoverable row below, not only by its own switch.
+    let enabled = store.get(bluetooth::Enabled);
 
     page(
-        PAGE.title,
+        &PAGE,
         (settings_card_titled(
             "Bluetooth",
             (
                 setting_row_icon(
                     icons::BLUETOOTH,
                     "Bluetooth",
-                    switch(enabled, |bluetooth: &mut Bluetooth, on| {
-                        bluetooth.enabled = on;
-                    }),
+                    switch(store, bluetooth::Enabled),
                 ),
                 settings_divider(),
                 setting_row_desc(
