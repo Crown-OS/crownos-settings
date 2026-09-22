@@ -136,12 +136,14 @@ impl ConfigStore {
         *S::slot_mut(self) = value;
     }
 
-    /// Saving is best effort: a read-only config dir shouldn't take the window
-    /// down, but it also shouldn't fail silently.
+    /// Hands the section to [`crate::util::persist`], which writes it on its
+    /// own thread once the edits have stopped coming.
+    ///
+    /// Deliberately not a write: this runs inside the widget callback that
+    /// changed the value, and a slider's callback runs on every frame the
+    /// pointer moves.
     fn persist<S: Section>(&self) {
-        if let Err(err) = crownos_config::save(S::NAME, S::slot(self)) {
-            eprintln!("crownsettings: could not save {}.ron: {err}", S::NAME);
-        }
+        crate::util::persist::save(S::NAME, S::slot(self).clone());
     }
 }
 
@@ -248,6 +250,7 @@ sections! {
 mod tests {
     use super::*;
     use crownos_config::schema::wifi;
+    use crate::util::persist;
 
     /// Something that is definitely not RON, used to prove a write *didn't*
     /// happen: if the store had saved, this would be gone.
@@ -286,9 +289,20 @@ mod tests {
         }
         assert_eq!(store.section::<Wifi>(), &Wifi::default());
 
-        // --- update edits the section and writes it through ----------------
+        // --- a write reaches the interface at once and the disk later ------
+        // Persisting is debounced onto its own thread — see
+        // [`crate::util::persist`] — so the store is authoritative the instant
+        // the edit lands, and the file catches up. Every on-disk assertion
+        // below therefore flushes first, which is the same thing the window's
+        // shutdown does.
         store.update::<Wifi>(|wifi| wifi.network = Some("Workshop".to_owned()));
         assert_eq!(store.section::<Wifi>().network.as_deref(), Some("Workshop"));
+        assert_eq!(
+            crownos_config::load::<Wifi>(Wifi::NAME).network, None,
+            "the write is queued, not made, inside the callback"
+        );
+
+        persist::flush();
         assert_eq!(
             crownos_config::load::<Wifi>(Wifi::NAME).network.as_deref(),
             Some("Workshop"),
@@ -301,6 +315,7 @@ mod tests {
         store.set(wifi::Enabled, false);
         let enabled: bool = store.get(wifi::Enabled);
         assert!(!enabled);
+        persist::flush();
         assert!(
             !crownos_config::load::<Wifi>(Wifi::NAME).enabled,
             "set() must persist the edit"
@@ -313,8 +328,12 @@ mod tests {
         store.set(wifi::Enabled, true);
 
         // --- a key write that changes nothing doesn't touch the file -------
+        // Flushed first, or the write queued just above would land on the
+        // sentinel and the assertion would be about the wrong thing.
+        persist::flush();
         std::fs::write(&wifi_path, SENTINEL).expect("plant sentinel");
         store.set(wifi::Enabled, true);
+        persist::flush();
         assert_eq!(
             std::fs::read(&wifi_path).unwrap(),
             SENTINEL,
@@ -324,6 +343,7 @@ mod tests {
         // --- an update that changes nothing doesn't touch the file ---------
         std::fs::write(&wifi_path, SENTINEL).expect("plant sentinel");
         store.update::<Wifi>(|wifi| wifi.network = Some("Workshop".to_owned()));
+        persist::flush();
         assert_eq!(
             std::fs::read(&wifi_path).unwrap(),
             SENTINEL,
@@ -332,11 +352,13 @@ mod tests {
 
         // --- an update that does change something still writes -------------
         store.update::<Wifi>(|wifi| wifi.enabled = false);
+        persist::flush();
         let on_disk = crownos_config::load::<Wifi>(Wifi::NAME);
         assert!(!on_disk.enabled);
         assert_eq!(on_disk.network.as_deref(), Some("Workshop"));
 
         // --- adopt takes a value that is already on disk, silently ---------
+        persist::flush();
         std::fs::write(&wifi_path, SENTINEL).expect("plant sentinel");
         store.adopt(Wifi {
             enabled: true,
@@ -351,6 +373,7 @@ mod tests {
 
         // --- sections are independent -------------------------------------
         store.update::<Sound>(|sound| sound.output_volume = 77.0);
+        persist::flush();
         assert_eq!(
             crownos_config::load::<Sound>(Sound::NAME).output_volume,
             77.0

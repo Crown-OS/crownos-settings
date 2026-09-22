@@ -28,6 +28,7 @@ mod net;
 mod pages;
 mod sidebar;
 mod state;
+mod util;
 
 use crownuikit::util::INTER_FONT_DATA;
 use winit::dpi::LogicalSize;
@@ -49,5 +50,10 @@ fn main() -> Result<(), EventLoopError> {
     let app = Xilem::new_simple(AppState::load(), app::root_view, window)
         .with_font(INTER_FONT_DATA.to_vec());
 
-    app.run_in(EventLoop::with_user_event())
+    let result = app.run_in(EventLoop::with_user_event());
+
+    // The window is gone, so nothing is going to change again — but a write
+    // debounced moments before it closed is still owed to the user.
+    util::persist::flush();
+    result
 }
