@@ -7,7 +7,7 @@ use xilem::masonry::properties::types::AsUnit;
 use xilem::masonry::properties::Padding;
 use xilem::style::Style;
 use xilem::view::{flex_col, flex_row, label, portal, sized_box, CrossAxisAlignment, FlexSpacer};
-use xilem::{FontWeight, WidgetView};
+use xilem::{AnyWidgetView, FontWeight, WidgetView};
 
 // --- MARK: Page chrome constants ---
 //
@@ -284,6 +284,37 @@ where
     row_shell(left, control)
 }
 
+/// [`setting_row_icon`] with [`setting_row_desc`]'s muted line under the
+/// title — a row that introduces a thing and says what state it is in.
+pub fn setting_row_icon_desc<State, Action, V>(
+    icon_svg: &'static str,
+    title: impl Into<ArcStr>,
+    description: impl Into<ArcStr>,
+    control: V,
+) -> impl WidgetView<State, Action>
+where
+    State: 'static,
+    Action: 'static,
+    V: WidgetView<State, Action>,
+{
+    let text = flex_col((
+        row_title(title),
+        label(description.into())
+            .text_size(ROW_DESC_SIZE)
+            .font(INTER)
+            .color(theme().text.muted),
+    ))
+    .gap(ROW_DESC_GAP.px())
+    .cross_axis_alignment(CrossAxisAlignment::Start);
+    let left = flex_row((
+        icon(icon_svg).size(ROW_ICON_SIZE).color(theme().text.icon),
+        text,
+    ))
+    .gap(ROW_ICON_GAP.px())
+    .cross_axis_alignment(CrossAxisAlignment::Center);
+    row_shell(left, control)
+}
+
 /// A row whose whole interior the caller composes, wearing nothing but the
 /// padding every other row wears.
 ///
@@ -325,4 +356,19 @@ where
 /// site, so a future page-specific hairline has one place to go.
 pub fn settings_divider() -> Divider {
     divider()
+}
+
+/// A hairline between every pair of rows and nowhere else, for a card built
+/// from a list rather than written out by hand.
+pub fn separated<State: 'static>(
+    rows: impl IntoIterator<Item = Box<AnyWidgetView<State>>>,
+) -> Vec<Box<AnyWidgetView<State>>> {
+    let mut out = Vec::new();
+    for row in rows {
+        if !out.is_empty() {
+            out.push(settings_divider().boxed());
+        }
+        out.push(row);
+    }
+    out
 }

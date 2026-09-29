@@ -830,6 +830,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
+name = "crownconnect-linux"
+version = "0.1.0"
+dependencies = [
+ "crownos-ipc",
+ "serde",
+]
+
+[[package]]
 name = "crownos-config"
 version = "0.1.0"
 dependencies = [
@@ -866,6 +874,7 @@ version = "0.1.0"
 dependencies = [
  "blinc_icons",
  "cpal",
+ "crownconnect-linux",
  "crownos-config",
  "crownos-ipc",
  "crownpaper",
@@ -873,6 +882,7 @@ dependencies = [
  "futures-util",
  "image",
  "nmrs",
+ "qrcode",
  "serde",
  "tokio",
  "wayland-client",
@@ -1754,6 +1764,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kurbo"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b60dfc32f652b926df6192e55525b16d186c69d47876c3ead4da5cc9f8450e2"
+dependencies = [
+ "arrayvec",
+ "euclid",
+ "polycool",
+ "smallvec",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2547,7 +2569,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3c76095c9a636173600478e0373218c7b955335048c2bcd12dc6a79657649d8"
 dependencies = [
  "color",
- "kurbo",
+ "kurbo 0.12.0",
  "linebender_resource_handle",
  "smallvec",
 ]
@@ -2654,6 +2676,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
 
 [[package]]
+name = "polycool"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50596ddc09eb5ad5f75cacd40209568e66df71baf86e1499a0e99c4cff12a5a6"
+dependencies = [
+ "arrayvec",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2721,6 +2752,12 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quick-error"
@@ -3559,7 +3596,7 @@ checksum = "8a57da61c5700db75d28822c56068295055ec216996560af57a5d4a457914d34"
 dependencies = [
  "dpi",
  "keyboard-types",
- "kurbo",
+ "kurbo 0.12.0",
 ]
 
 [[package]]
@@ -3632,11 +3669,10 @@ dependencies = [
 [[package]]
 name = "vello_encoding"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfd5e0b9fec91df34a09fbcbbed474cec68d05691b590a911c7af83c4860ae42"
 dependencies = [
  "bytemuck",
  "guillotiere",
+ "kurbo 0.13.1",
  "peniko",
  "skrifa 0.37.0",
  "smallvec",

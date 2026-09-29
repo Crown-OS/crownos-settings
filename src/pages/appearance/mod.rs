@@ -29,14 +29,13 @@ use crate::state::Store;
 use crate::util::bento;
 
 
-/// Cell columns the bento pattern tiles across. Fixed rather than measured —
-/// the grid divides whatever width it is given into this many — so it is the
-/// tile *count* per row that is constant, not a tile's width.
-const GRID_COLUMNS: i32 = 4;
-/// One cell row's height. The feature tile spans two of these, which lands
-/// both tile shapes near a desktop's own proportions at the widths this pane
-/// takes.
-const CELL_HEIGHT: f64 = 88.0;
+/// One cell row's height. The pattern spans three to nine of them, so the row
+/// is a fine unit rather than a tile-sized one: this is the value that lands
+/// every shape in the pattern on the reference layout's proportions at the
+/// widths this pane takes. The columns are not fixed the same way — the grid
+/// divides whatever width it is given into [`COLUMNS`](bento::COLUMNS) of
+/// them.
+const CELL_HEIGHT: f64 = 33.0;
 /// The gap the eye sees between two thumbnails, in both directions and
 /// between blocks — the pattern's tiles differ in size but never in the
 /// distance between them.
@@ -55,8 +54,6 @@ const RING_INSET: f64 = RING_GAP + RING_WIDTH;
 /// What the grid is told, so that what the eye sees is [`TILE_GAP`]: the ring
 /// reserves [`RING_INSET`] on each of the two tiles either side of a gap.
 const CELL_GAP: f64 = TILE_GAP - 2.0 * RING_INSET;
-/// One block's height: its rows, plus the cell gaps between them.
-const BLOCK_HEIGHT: f64 = bento::BLOCK_ROWS as f64 * (CELL_HEIGHT + CELL_GAP) - CELL_GAP;
 /// A spinner sized to sit in a row without changing its height — the same
 /// size the Wi-Fi page uses for the same purpose.
 const ROW_SPINNER: f64 = 14.0;
@@ -190,39 +187,61 @@ fn gallery(wallpaper: &WallpaperState, current: Option<&str>) -> PageView {
         .boxed();
     }
 
-    // One grid per block rather than one grid for the gallery: a grid divides
-    // the height it is handed among its rows, and a tall enough one would be
+    // One grid per section rather than one for the gallery: a grid divides the
+    // height it is handed among its rows, and a tall enough one would be
     // squashed to the scroll viewport — `sized_box` clamps a height to the
-    // constraints it is given. A block is short enough never to meet that
-    // ceiling, and stacking them keeps the pattern's own gap between blocks.
-    let blocks: Vec<PageView> = wallpaper
+    // constraints it is given. A section is short enough never to meet that
+    // ceiling, and stacking them keeps the pattern's own gap between sections.
+    let sections: Vec<PageView> = wallpaper
         .entries
-        .chunks(bento::block_size(GRID_COLUMNS))
+        .chunks(bento::BLOCK_SIZE)
         .enumerate()
-        .map(|(block, entries)| {
-            let tiles: Vec<_> = entries
-                .iter()
-                .enumerate()
-                .map(|(slot, entry)| {
-                    let cell = bento::cell(block, slot, GRID_COLUMNS);
-                    tile(entry, current == Some(entry.path.as_str()))
-                        .grid_item(GridParams::new(cell.x, cell.y, cell.width, cell.height))
-                })
-                .collect();
-
-            sized_box(grid(tiles, GRID_COLUMNS, bento::BLOCK_ROWS).spacing(CELL_GAP.px()))
-                .expand_width()
-                .height(BLOCK_HEIGHT.px())
-                .boxed()
+        .flat_map(|(block, entries)| {
+            let (showcase, band) = entries.split_at(entries.len().min(bento::SHOWCASE_TILES));
+            [
+                section(showcase, bento::showcase(block), bento::SHOWCASE_ROWS, current),
+                section(band, bento::band(block), bento::BAND_ROWS, current),
+            ]
         })
+        .flatten()
         .collect();
 
     setting_row_content(
-        flex_col(blocks)
+        flex_col(sections)
             .gap(CELL_GAP.px())
             .cross_axis_alignment(CrossAxisAlignment::Start),
     )
     .boxed()
+}
+
+/// One section of the pattern as a grid, or nothing when the gallery ran out
+/// of wallpapers before reaching it.
+fn section(
+    entries: &[WallpaperEntry],
+    cells: impl Iterator<Item = bento::Cell>,
+    rows: i32,
+    current: Option<&str>,
+) -> Option<PageView> {
+    if entries.is_empty() {
+        return None;
+    }
+
+    let tiles: Vec<_> = entries
+        .iter()
+        .zip(cells)
+        .map(|(entry, cell)| {
+            tile(entry, current == Some(entry.path.as_str()))
+                .grid_item(GridParams::new(cell.x, cell.y, cell.width, cell.height))
+        })
+        .collect();
+
+    let height = f64::from(rows) * (CELL_HEIGHT + CELL_GAP) - CELL_GAP;
+    Some(
+        sized_box(grid(tiles, bento::COLUMNS, rows).spacing(CELL_GAP.px()))
+            .expand_width()
+            .height(height.px())
+            .boxed(),
+    )
 }
 
 /// One clickable wallpaper, filling the cell the pattern gave it.

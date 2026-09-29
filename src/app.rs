@@ -10,6 +10,7 @@ use xilem::style::Style;
 use xilem::view::sized_box;
 
 use crate::config::ConfigStore;
+use crate::net::crownconnect::{CrossDeviceState, crownconnect_worker};
 use crate::net::outputs::{OutputState, output_worker};
 use crate::net::wallpaper::{WallpaperState, wallpaper_worker};
 use crate::net::wifi::{WifiState, wifi_worker};
@@ -133,6 +134,11 @@ impl AppState {
         &mut self.store.outputs
     }
 
+    /// The cross-device half, for its backend worker.
+    fn cross_device_mut(&mut self) -> &mut CrossDeviceState {
+        &mut self.store.cross_device
+    }
+
     /// Nothing to mirror: the compositor persists the arrangement itself, so
     /// copying it into a RON file here would be a second source of truth.
     fn observe_outputs(_state: &mut Self, _event: &crate::net::outputs::OutputEvent) {}
@@ -226,6 +232,7 @@ pub fn root_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
             wifi_worker(AppState::wifi_mut, AppState::mirror_wifi),
             wallpaper_worker(AppState::wallpaper_mut, AppState::mirror_wallpaper),
             output_worker(AppState::outputs_mut, AppState::observe_outputs),
+            crownconnect_worker(AppState::cross_device_mut),
         ),
     )
 }

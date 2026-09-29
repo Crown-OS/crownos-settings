@@ -30,7 +30,7 @@ mod sidebar;
 mod state;
 mod util;
 
-use crownuikit::util::INTER_FONT_DATA;
+use crownuikit::util::inter_font;
 use winit::dpi::LogicalSize;
 use winit::error::EventLoopError;
 use xilem::{EventLoop, WindowOptions, Xilem};
@@ -48,7 +48,7 @@ fn main() -> Result<(), EventLoopError> {
         .with_min_inner_size(MIN_SIZE);
 
     let app = Xilem::new_simple(AppState::load(), app::root_view, window)
-        .with_font(INTER_FONT_DATA.to_vec());
+        .with_font(inter_font());
 
     let result = app.run_in(EventLoop::with_user_event());
 

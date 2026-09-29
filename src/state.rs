@@ -39,6 +39,7 @@ use crownos_config::Key;
 use crownos_config::schema::{appearance, wifi};
 
 use crate::config::{ConfigStore, Section};
+use crate::net::crownconnect::CrossDeviceState;
 use crate::net::outputs::OutputState;
 use crate::net::wallpaper::{WallpaperEvent, WallpaperState};
 use crate::net::wifi::{WifiEvent, WifiSnapshot, WifiState};
@@ -64,6 +65,9 @@ pub struct Store {
     /// to them. A fact like the other two — the compositor owns the
     /// arrangement and persists it, so nothing here is written to a RON file.
     pub outputs: OutputState,
+    /// The devices crownconnect pairs with, and the pairing flow in progress.
+    /// A fact like the others: the daemon owns pairings and persists them.
+    pub cross_device: CrossDeviceState,
     /// The microphones this machine has, and which one "Automatic" currently
     /// resolves to.
     ///
@@ -107,6 +111,7 @@ impl Store {
             wifi: WifiState::default(),
             wallpaper: WallpaperState::default(),
             outputs: OutputState::default(),
+            cross_device: CrossDeviceState::default(),
             microphones: Microphones::probe(),
         }
     }
@@ -120,6 +125,7 @@ impl Store {
             wifi: WifiState::default(),
             wallpaper: WallpaperState::default(),
             outputs: OutputState::default(),
+            cross_device: CrossDeviceState::default(),
             microphones: Microphones::default(),
         }
     }

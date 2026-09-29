@@ -37,6 +37,7 @@
 //! rather than a worker. Its module docs say why.
 
 pub mod audio;
+pub mod crownconnect;
 pub mod outputs;
 pub mod wallpaper;
 pub mod wifi;

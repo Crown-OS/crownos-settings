@@ -11,6 +11,7 @@
 
 mod appearance;
 mod bluetooth;
+mod cross_device;
 mod display;
 mod input;
 mod keybinds;
@@ -67,7 +68,7 @@ pub struct PageGroup {
 pub static GROUPS: &[PageGroup] = &[
     PageGroup {
         label: "Connectivity",
-        pages: &[wifi::PAGE, bluetooth::PAGE],
+        pages: &[wifi::PAGE, bluetooth::PAGE, cross_device::PAGE],
     },
     PageGroup {
         label: "Personalization",
