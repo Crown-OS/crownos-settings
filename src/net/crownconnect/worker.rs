@@ -4,14 +4,14 @@ use std::time::Duration;
 
 use crownconnect_linux::ipc::proto;
 use crownos_ipc::Error as IpcError;
-use xilem::core::MessageProxy;
-use xilem::tokio::sync::mpsc::UnboundedReceiver;
-use xilem::tokio::time::{Instant, sleep_until};
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::time::{Instant, sleep_until};
 
 use super::daemon::Daemon;
 use super::{CrossDeviceCommand, CrossDeviceEvent, PairingInvite};
 use crate::util::clock::unix_millis;
-use crate::util::qr::qr_brush;
+use crate::util::qr::QrMatrix;
+use crate::util::worker::MessageProxy;
 
 const TICK: Duration = Duration::from_secs(1);
 
@@ -39,12 +39,12 @@ pub(super) async fn run(
         daemon.reconnect_when_due().await;
 
         let wake = match daemon.client.as_mut() {
-            Some(client) => xilem::tokio::select! {
+            Some(client) => tokio::select! {
                 command = commands.recv() => Wake::Command(command),
                 inbound = client.pump() => Wake::Inbound(inbound),
                 () = wait_until(countdown.next_tick) => Wake::Tick,
             },
-            None => xilem::tokio::select! {
+            None => tokio::select! {
                 command = commands.recv() => Wake::Command(command),
                 () = wait_until(daemon.retry_at) => Wake::Retry,
                 () = wait_until(countdown.next_tick) => Wake::Tick,
@@ -71,7 +71,7 @@ async fn execute(daemon: &mut Daemon, countdown: &mut Countdown, command: CrossD
             else {
                 return;
             };
-            match qr_brush(&offer.qr) {
+            match QrMatrix::encode(&offer.qr) {
                 Ok(qr) => {
                     countdown.start(offer.expires_unix_ms, daemon);
                     daemon.say(CrossDeviceEvent::PairingInvite(PairingInvite {

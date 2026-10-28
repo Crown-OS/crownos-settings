@@ -1,7 +1,7 @@
 //! The Wi-Fi backend: NetworkManager on one side, a plain struct on the other.
 //!
-//! [`nmrs`] is an async D-Bus client. A xilem page is a synchronous function
-//! that turns `&State` into a view tree and must never block. This module is the
+//! [`nmrs`] is an async D-Bus client. A CrownUI page is built once on the UI
+//! thread and must never block. This module is the
 //! seam between those two worlds, and it is built so that *all* of the async,
 //! fallible, D-Bus-shaped half lives below [`wifi_worker`] and none of it
 //! escapes upwards.
@@ -11,15 +11,16 @@
 //! * [`WifiCommand`] — everything the page can ask for. Fire-and-forget: a
 //!   command is pushed onto a channel and the page keeps rendering.
 //! * [`WifiEvent`] — everything the worker can say back. Delivered on the main
-//!   thread through xilem's message path, so handling one is an ordinary
-//!   `&mut State` edit followed by a free rebuild.
+//!   thread by [`crate::util::worker`], so handling one is an ordinary edit of
+//!   the [`WifiState`] signal, which re-runs only the bindings that read it.
 //! * [`WifiSnapshot`] — the whole visible world in one value: radio, current
 //!   connection, known networks, other networks. Already sorted, already
 //!   de-duplicated, already carrying the booleans a row needs. Derived once per
 //!   refresh so that a page never computes anything but layout.
-//! * [`WifiState`] — the snapshot plus the transient bits a page needs to keep
-//!   between rebuilds (which SSID is being joined, the last error, an open
-//!   password prompt) plus the sending half of the command channel.
+//! * [`WifiState`] — the snapshot plus the transient bits more than one card
+//!   needs to agree on (which SSID is being joined, the last error, which
+//!   network has a password prompt open) plus the sending half of the command
+//!   channel.
 //!
 //! No `nmrs` type appears in any of them. That is not tidiness for its own
 //! sake: it is what lets [`crate::pages::wifi`] be built — and tested — on a
@@ -71,18 +72,18 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crownui::prelude::{Cx, Signal};
 use futures_util::StreamExt;
 use nmrs::models::{
     ActiveConnection, ActiveConnectionState, NetworkEvent, NetworkEventStream, NetworkSnapshot,
     SavedConnection, SecurityFeatures, SettingsPatch, WifiNetworkGroup, WifiSecurity,
 };
 use nmrs::{ConnectionError, NetworkManager};
-use xilem::ViewCtx;
-use xilem::core::{MessageProxy, NoElement, View};
-use xilem::tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use xilem::tokio::task::JoinSet;
-use xilem::tokio::time::{Instant, sleep_until};
-use xilem::view::worker_raw;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinSet;
+use tokio::time::{Instant, sleep_until};
+
+use crate::util::worker::{MessageProxy, spawn_worker};
 
 /// How long a burst of NetworkManager signals is allowed to run before the
 /// worker re-reads the world.
@@ -320,20 +321,6 @@ impl WifiSnapshot {
 
 // --- MARK: State ---
 
-/// An unsubmitted password, for a network the user has clicked but not joined.
-///
-/// Pure UI state — it never reaches the worker until the user presses Join, at
-/// which point it becomes a [`WifiCommand::Connect`]. It lives in [`WifiState`]
-/// rather than in the view because xilem views are rebuilt from scratch on
-/// every message and cannot hold anything of their own.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PasswordPrompt {
-    /// The network the prompt is attached to.
-    pub ssid: String,
-    /// What has been typed so far.
-    pub password: String,
-}
-
 /// The Wi-Fi half of the app's [`Store`](crate::state::Store).
 ///
 /// Runtime only: nothing here is ever persisted, and a fresh
@@ -361,16 +348,15 @@ pub struct WifiState {
     /// Separate from [`error`](Self::error): an error is about one action and
     /// goes away, this is about the whole page and doesn't.
     pub unavailable: Option<String>,
-    /// The open password prompt, if the user is part-way through joining a
-    /// secured network.
-    pub prompt: Option<PasswordPrompt>,
+    /// The SSID whose row has grown a password field, if the user is part-way
+    /// through joining a secured network. What is typed stays in the field
+    /// until Join turns it into a [`WifiCommand::Connect`].
+    pub prompt: Option<String>,
     /// Whether the current network's card is showing its address, signal and
     /// security rather than just its name.
     ///
-    /// Pure UI state, for the same reason [`prompt`](Self::prompt) is: a xilem
-    /// view is rebuilt from scratch on every message and can remember nothing
-    /// of its own, so "the user pressed Details…" has to live somewhere the
-    /// rebuild can see. It is deliberately not per-SSID — there is only ever
+    /// Pure UI state, kept here rather than in the card because the Known
+    /// Networks menu opens it too. It is deliberately not per-SSID — there is only ever
     /// one current network, and a disclosure triangle that remembers a network
     /// you left is a disclosure triangle pointing at nothing.
     pub details_open: bool,
@@ -435,7 +421,7 @@ impl WifiState {
                 // The prompt did its job the moment the join was submitted;
                 // leaving it open would put a filled password field under a
                 // row that is already spinning.
-                if self.prompt.as_ref().is_some_and(|open| open.ssid == ssid) {
+                if self.prompt.as_ref().is_some_and(|open| *open == ssid) {
                     self.prompt = None;
                 }
                 self.error = None;
@@ -459,38 +445,25 @@ impl WifiState {
     }
 }
 
-// --- MARK: The worker view ---
+// --- MARK: The worker ---
 
-/// The Wi-Fi backend, as an element-less view.
+/// Starts the Wi-Fi backend for as long as the calling component lives, which
+/// is what makes the D-Bus connection's lifetime exactly the window's.
 ///
-/// Draws nothing, so — like [`crate::config::ConfigStore::watchers`] — it rides
-/// in the alongside slot of [`fork`](xilem::core::fork). Its future is spawned
-/// once when the tree is built and aborted when the tree goes away, which is
-/// what makes the D-Bus connection's lifetime exactly the window's lifetime.
-///
-/// Two projections rather than one, because the two halves of handling an event
-/// belong to different layers. `wifi` reaches the runtime state this module
-/// owns; `on_event` is the caller's chance to do something with the event that
-/// this module has no business knowing about — in this app, mirroring the radio
-/// and the SSID back into `wifi.ron` so other CrownOS apps see them.
-pub fn wifi_worker<State, F>(
-    wifi: fn(&mut State) -> &mut WifiState,
-    on_event: F,
-) -> impl View<State, (), ViewCtx, Element = NoElement> + Send + Sync
-where
-    State: 'static,
-    F: Fn(&mut State, &WifiEvent) + Send + Sync + 'static,
-{
-    worker_raw(
-        |proxy: MessageProxy<WifiEvent>, commands: UnboundedReceiver<WifiCommand>| {
-            run(proxy, commands)
-        },
-        move |state: &mut State, sender| wifi(state).attach(sender),
-        move |state: &mut State, event: WifiEvent| {
-            on_event(state, &event);
-            wifi(state).apply(event);
-        },
-    )
+/// `on_event` sees every event before `wifi` folds it in: the caller's chance
+/// to do something this module has no business knowing about — in this app,
+/// mirroring the radio and the SSID back into `wifi.ron` so other CrownOS apps
+/// see them.
+pub fn wifi_worker(
+    cx: &mut Cx,
+    wifi: Signal<WifiState>,
+    mut on_event: impl FnMut(&mut Cx, &WifiEvent) + 'static,
+) {
+    let sender = spawn_worker(cx, run, move |cx, event| {
+        on_event(cx, &event);
+        wifi.update(cx, |wifi| wifi.apply(event));
+    });
+    wifi.update(cx, |wifi| wifi.attach(sender));
 }
 
 // --- MARK: The worker future ---
@@ -562,7 +535,7 @@ async fn run(proxy: MessageProxy<WifiEvent>, mut commands: UnboundedReceiver<Wif
         // want to assign to.
         let deadline = earliest(refresh_at, resubscribe_at);
 
-        xilem::tokio::select! {
+        tokio::select! {
             () = wait_until(deadline) => {
                 // The timer serves both deadlines, so it fires for whichever
                 // was sooner and the other is simply not due yet. A resubscribe
@@ -639,7 +612,7 @@ async fn park(
 
 /// Wait for the next refresh signal, or forever when there is no stream.
 ///
-/// The `pending` arm is what lets the [`select!`](xilem::tokio::select) above
+/// The `pending` arm is what lets the [`select!`](tokio::select) above
 /// treat "no event stream" as "this branch simply never fires" instead of
 /// needing a second loop shape.
 async fn next_signal(
@@ -1061,7 +1034,7 @@ async fn attempt(manager: &NetworkManager, job: Job) -> Result<(), String> {
         if !matches!(error, ConnectionError::ConnectionInProgress) {
             return Err(describe(&job, &error));
         }
-        xilem::tokio::time::sleep(RETRY_DELAY).await;
+        tokio::time::sleep(RETRY_DELAY).await;
         return run_job(manager, &job)
             .await
             .map_err(|error| describe(&job, &error));
@@ -1160,7 +1133,7 @@ fn on_off(enabled: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xilem::tokio::sync::mpsc::unbounded_channel;
+    use tokio::sync::mpsc::unbounded_channel;
 
     /// `nmrs`'s own types are `#[non_exhaustive]` and mostly have no `Default`,
     /// so [`derive_snapshot`] itself cannot be driven from a test without a
@@ -1215,7 +1188,7 @@ mod tests {
 
     #[test]
     fn rows_sort_strongest_first_then_alphabetically() {
-        let mut rows = vec![
+        let mut rows = [
             known("Workshop", 40, true),
             known("Attic", 90, true),
             known("Basement", 40, true),
@@ -1540,11 +1513,10 @@ mod tests {
 
     #[test]
     fn a_join_spins_until_it_lands() {
-        let mut state = WifiState::default();
-        state.prompt = Some(PasswordPrompt {
-            ssid: "Workshop".to_owned(),
-            password: "hunter22".to_owned(),
-        });
+        let mut state = WifiState {
+            prompt: Some("Workshop".to_owned()),
+            ..WifiState::default()
+        };
 
         state.apply(WifiEvent::Connecting("Workshop".to_owned()));
         assert_eq!(state.connecting.as_deref(), Some("Workshop"));

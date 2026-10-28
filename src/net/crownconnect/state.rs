@@ -2,8 +2,9 @@
 //! into it.
 
 use crownconnect_linux::ipc::proto::{self, Event};
-use xilem::ImageBrush;
-use xilem::tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::util::qr::QrMatrix;
 
 use super::{
     CrossDeviceCommand, CrossDeviceEvent, DeviceId, DeviceInfo, Edge, Feature, FeatureSet,
@@ -43,10 +44,10 @@ impl Device {
     }
 }
 
-/// The QR invitation on screen, rasterized once when it arrives.
+/// The QR invitation on screen, encoded once when it arrives.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PairingInvite {
-    pub qr: ImageBrush,
+    pub qr: QrMatrix,
     pub expires_unix_ms: u64,
 }
 
@@ -373,9 +374,7 @@ fn restrict(set: FeatureSet, allowed: FeatureSet) -> FeatureSet {
 mod tests {
     use super::*;
     use crownconnect_linux::ipc::proto::{DeviceClass, LinkKind};
-    use xilem::masonry::peniko::{ImageAlphaType, ImageData};
-    use xilem::tokio::sync::mpsc::unbounded_channel;
-    use xilem::{Blob, ImageFormat};
+    use tokio::sync::mpsc::unbounded_channel;
 
     const PHONE: DeviceId = DeviceId([1; 32]);
     const TABLET: DeviceId = DeviceId([2; 32]);
@@ -405,13 +404,7 @@ mod tests {
 
     fn invite() -> PairingInvite {
         PairingInvite {
-            qr: ImageBrush::new(ImageData {
-                data: Blob::from(vec![0_u8; 4]),
-                format: ImageFormat::Rgba8,
-                alpha_type: ImageAlphaType::Alpha,
-                width: 1,
-                height: 1,
-            }),
+            qr: QrMatrix::encode("crownconnect://pair").expect("short text always encodes"),
             expires_unix_ms: 10_000,
         }
     }

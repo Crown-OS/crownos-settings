@@ -2,120 +2,123 @@
 //!
 //! Today that is dictation and nothing else, which is why the page is one card.
 //! It is filed as *Input* rather than as *Dictation* for the same reason
-//! `input.ron` is — the page is the home for text entry generally, and the
-//! second thing to land in it (key repeat, an input method) should be a second
-//! card rather than a second page in the sidebar.
+//! `input.ron` is — the page is the home for text entry generally.
 //!
 //! Everything on it writes straight to `input.ron`, and crowndictator follows
 //! that file live: the toggle releases its keyboard grab, the shortcut re-arms
-//! it, and the device is picked up at the start of the next recording. There is
-//! nothing to apply and nothing to restart.
+//! it, and the device is picked up at the start of the next recording.
 
-use blinc_icons::icons;
 use crownos_config::schema::input;
-use crownuikit::widgets::{Tone, status};
-use xilem::WidgetView;
+use crownui::kit::{StatusOptions, Tone, icons, status};
+use crownui::prelude::{AnyView, Cx, Runtime, Semantic, bind, vstack};
 
 use crate::controls::{auto_name_choice, keybind, switch};
 use crate::layout::{
-    setting_row_content, setting_row_desc, setting_row_icon, settings_card_titled, settings_divider,
+    glyph, optional, setting_row_content, setting_row_desc, setting_row_icon, settings_card_titled,
+    settings_divider, when,
 };
-use crate::pages::{PageDescriptor, PageView, page};
+use crate::pages::{PageDescriptor, page};
 use crate::state::Store;
+use crate::util::bridge::derived;
 
 pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Input",
+    slug: "input",
     icon: icons::MIC,
     build,
 };
 
-fn build(store: &Store) -> PageView {
+fn build(cx: &mut Cx, store: Store) -> AnyView {
     // Everything below the switch configures a feature that is off, so it is
-    // shown greyed rather than hidden: a user turning dictation back on should
-    // be able to see what it is about to do before it does it.
-    let enabled = store.get(input::DictationEnabled);
+    // shown disabled rather than hidden: a user turning dictation back on
+    // should be able to see what it is about to do before it does it.
+    let enabled = move |runtime: &mut Runtime| store.get(runtime, input::DictationEnabled);
+    let disabled = move || bind(move |runtime| !enabled(runtime));
+    let names = derived(cx, move |runtime| {
+        store
+            .microphones
+            .with(runtime, |microphones| microphones.names.clone())
+    });
 
-    let mut rows: Vec<PageView> = vec![
-        setting_row_desc(
+    let microphone = auto_name_choice(
+        cx,
+        store,
+        input::DictationMicrophone,
+        names,
+        move |runtime| {
+            store.microphones.with(runtime, |microphones| {
+                automatic_label(microphones.default.as_deref())
+            })
+        },
+    )
+    .disabled(disabled());
+
+    page(
+        &PAGE,
+        (settings_card_titled(
             "Dictation",
-            "Hold the shortcut anywhere to speak, release to type what you said",
-            switch(store, input::DictationEnabled),
-        )
-        .boxed(),
-        settings_divider().boxed(),
-        setting_row_icon(
-            icons::MIC,
-            "Microphone source",
-            auto_name_choice(
-                store,
-                input::DictationMicrophone,
-                automatic_label(store.microphones.default.as_deref()),
-                &store.microphones.names,
-            )
-            .disabled(!enabled),
-        )
-        .boxed(),
-        settings_divider().boxed(),
-        setting_row_desc(
-            "Shortcut",
-            "Click, then press the keys you want to hold",
-            keybind(store, input::DictationHotkey).disabled(!enabled),
-        )
-        .boxed(),
-    ];
+            (
+                setting_row_desc(
+                    "Dictation",
+                    "Hold the shortcut anywhere to speak, release to type what you said",
+                    switch(cx, store, input::DictationEnabled),
+                ),
+                settings_divider(),
+                setting_row_icon(glyph(icons::MIC), "Microphone source", microphone),
+                settings_divider(),
+                setting_row_desc(
+                    "Shortcut",
+                    "Click, then press the keys you want to hold",
+                    keybind(cx, store, input::DictationHotkey).disabled(disabled()),
+                ),
+                // A cleared shortcut leaves the feature on with no way to
+                // reach it — worth saying, because the rest of the card looks
+                // perfectly healthy.
+                when(
+                    move |runtime| {
+                        enabled(runtime) && store.get(runtime, input::DictationHotkey).is_empty()
+                    },
+                    |_| warning("No shortcut is set, so dictation cannot be started".to_owned()),
+                ),
+                // A microphone that has since been unplugged is still what the
+                // user asked for, so it is not silently rewritten — but
+                // recording falls back to the default until it is back.
+                optional(
+                    move |runtime| {
+                        if !enabled(runtime) {
+                            return None;
+                        }
+                        let chosen = store.get(runtime, input::DictationMicrophone);
+                        store.microphones.with(runtime, |microphones| {
+                            missing_microphone(chosen, &microphones.names)
+                        })
+                    },
+                    |_, missing| {
+                        warning(format!(
+                            "“{missing}” isn't connected — recording uses the default microphone until it is"
+                        ))
+                    },
+                ),
+                settings_divider(),
+                setting_row_desc(
+                    "Use GPU acceleration",
+                    "Falls back to the processor when no supported GPU is available",
+                    switch(cx, store, input::DictationGpu).disabled(disabled()),
+                ),
+            ),
+        ),),
+    )
+}
 
-    // A shortcut can be cleared, and a cleared one leaves the feature switched
-    // on with no way to reach it — worth saying out loud, because the rest of
-    // the card looks perfectly healthy.
-    if enabled && store.get(input::DictationHotkey).is_empty() {
-        rows.push(settings_divider().boxed());
-        rows.push(
-            setting_row_content(
-                status("No shortcut is set, so dictation cannot be started").tone(Tone::Warning),
-            )
-            .boxed(),
-        );
-    }
-
-    // Same for a microphone that has since been unplugged: the name is still in
-    // the file and still what the user asked for, so it is not silently
-    // rewritten — but recording will fall back to the default until it is back.
-    if enabled
-        && let Some(missing) = missing_microphone(
-            store.get(input::DictationMicrophone),
-            &store.microphones.names,
-        )
-    {
-        rows.push(settings_divider().boxed());
-        rows.push(
-            setting_row_content(
-                status(format!(
-                    "“{missing}” isn't connected — recording uses the default microphone until it is"
-                ))
-                .tone(Tone::Warning),
-            )
-            .boxed(),
-        );
-    }
-
-    rows.push(settings_divider().boxed());
-    rows.push(
-        setting_row_desc(
-            "Use GPU acceleration",
-            "Falls back to the processor when no supported GPU is available",
-            switch(store, input::DictationGpu).disabled(!enabled),
-        )
-        .boxed(),
-    );
-
-    page(&PAGE, (settings_card_titled("Dictation", rows),))
+fn warning(message: String) -> impl crownui::prelude::View {
+    vstack((
+        settings_divider(),
+        setting_row_content(status(message).tone(Tone::Warning)),
+    ))
 }
 
 /// What the "Automatic" row says, named with the device it currently resolves
 /// to — the way macOS writes "Automatic (MacBook Air Microphone)".
-///
-/// Falls back to the bare word on a machine that reports no default, where
-/// naming nothing in brackets would read as a bug.
 fn automatic_label(default: Option<&str>) -> String {
     match default {
         Some(name) => format!("Automatic ({name})"),
@@ -124,16 +127,8 @@ fn automatic_label(default: Option<&str>) -> String {
 }
 
 /// The configured microphone's name, if one is configured and the machine
-/// doesn't currently have it.
-///
-/// `None` while dictation is on the system default, or while the chosen device
-/// is present — and also on a machine that could not enumerate anything at all,
-/// where every name would look missing and the warning would be noise.
-///
-/// Takes the two values rather than the [`Store`] so the rule can be asserted
-/// without one: setting a key on a real store writes a real RON file, which a
-/// unit test has no business doing to the machine it runs on — the same
-/// constraint [`crate::state`]'s own tests work under.
+/// doesn't currently have it — and nothing on a machine that could not
+/// enumerate anything at all, where every name would look missing.
 fn missing_microphone(chosen: Option<String>, present: &[String]) -> Option<String> {
     let chosen = chosen?;
     if present.is_empty() || present.contains(&chosen) {
@@ -160,11 +155,8 @@ mod tests {
         );
     }
 
-    /// The warning fires for a device that is configured and gone, and stays
-    /// quiet for every other shape of the same two facts.
     #[test]
     fn only_a_configured_and_absent_microphone_is_reported_missing() {
-        // Nothing configured: the default is doing its job.
         assert_eq!(missing_microphone(None, &devices()), None);
         assert_eq!(
             missing_microphone(Some("Webcam".to_owned()), &devices()),
@@ -178,8 +170,7 @@ mod tests {
         assert_eq!(
             missing_microphone(Some("Yeti Pro".to_owned()), &[]),
             None,
-            "a machine that enumerated nothing reports nothing missing, \
-             rather than reporting everything missing"
+            "a machine that enumerated nothing reports nothing missing"
         );
     }
 }

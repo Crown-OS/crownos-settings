@@ -2,56 +2,85 @@
 //!
 //! This module knows how the sidebar *looks*; [`crate::pages::GROUPS`] knows
 //! what goes in it. Nothing here names an individual page, so a new page appears
-//! in the sidebar as soon as it's registered.
+//! in the sidebar as soon as it's registered. The chrome — the fixed column and
+//! the rounded content pane beside it — is the kit's `sidebar`.
 //!
-//! Only the rows live here. The sidebar chrome — the fixed column, its fill,
-//! and the rounded content pane beside it — is
-//! [`crownuikit::layouts::sidebar::sidebar`], which [`crate::app::root_view`]
-//! hands this column to.
+//! After the static groups comes the Plugins group, listed from the live
+//! plugin list: one row per enabled plugin that declares settings.
 
-use crownuikit::layouts::sidebar::{sidebar_item, sidebar_section};
-use xilem::masonry::properties::types::AsUnit;
-use xilem::view::{flex_col, CrossAxisAlignment};
-use xilem::WidgetView;
+use crownui::kit::{sidebar_item, sidebar_section};
+use crownui::prelude::{AnyView, Cx, Listeners, Runtime, Signal, View, bind, for_each};
 
-use crate::app::AppState;
-use crate::pages::{self, PageDescriptor, PageGroup};
+use crate::app::Navigation;
+use crate::layout::when;
+use crate::pages::{GROUPS, PluginPage, plugin_ordinal, plugin_pages};
+use crate::state::Store;
+use crate::util::bridge::derived;
 
-const GROUP_GAP: f64 = 6.0;
+const PLUGINS_LABEL: &str = "Plugins";
 
-/// The brand row plus one labelled section per registry group.
-pub fn sidebar_menus(current: &'static PageDescriptor) -> impl WidgetView<AppState> {
-    let sections: Vec<_> = pages::GROUPS
+/// One labelled section per registry group, then the Plugins group.
+pub fn sidebar_menus(cx: &mut Cx, navigation: Navigation, store: Store) -> Vec<AnyView> {
+    let current = navigation.current();
+    let mut ordinal = 0;
+    let mut menus: Vec<AnyView> = GROUPS
         .iter()
-        .map(|group| group_view(group, current))
-        .collect();
-
-    flex_col(sections)
-        .gap(GROUP_GAP.px())
-        .cross_axis_alignment(CrossAxisAlignment::Fill)
-}
-
-fn group_view(
-    group: &'static PageGroup,
-    current: &'static PageDescriptor,
-) -> impl WidgetView<AppState> {
-    let items: Vec<_> = group
-        .pages
-        .iter()
-        .map(|page| {
-            // Both sides come out of `GROUPS`, so identity is the selection
-            // test — no need for the pages to carry a comparable id.
-            let selected = std::ptr::eq(page, current);
-            sidebar_item(
-                page.title,
-                page.icon,
-                selected,
-                move |state: &mut AppState| {
-                    state.show(page);
-                },
-            )
+        .map(|group| {
+            let items: Vec<_> = group
+                .pages
+                .iter()
+                .map(|page| {
+                    let index = ordinal;
+                    ordinal += 1;
+                    sidebar_item(
+                        page.title,
+                        page.icon,
+                        bind(move |runtime| current.get(runtime) == index),
+                    )
+                    .on_click(move |cx, _| navigation.show(cx, index))
+                })
+                .collect();
+            sidebar_section(group.label, items).boxed()
         })
         .collect();
+    menus.push(plugin_menu(cx, navigation, store).boxed());
+    menus
+}
 
-    sidebar_section(group.label, items)
+fn plugin_menu(cx: &mut Cx, navigation: Navigation, store: Store) -> impl View + use<> {
+    let plugins = store.plugins;
+    let entries = derived(cx, move |runtime| plugins.with(runtime, plugin_pages));
+    when(
+        move |runtime| entries.with(runtime, |entries| !entries.is_empty()),
+        move |_| {
+            sidebar_section(
+                PLUGINS_LABEL,
+                for_each(
+                    entries,
+                    |entry: &PluginPage| (entry.id.clone(), entry.icon),
+                    move |cx, entry| plugin_item(cx, navigation, entry),
+                ),
+            )
+        },
+    )
+}
+
+fn plugin_item(
+    cx: &mut Cx,
+    navigation: Navigation,
+    entry: Signal<PluginPage>,
+) -> impl View + use<> {
+    let current = navigation.current();
+    let icon = entry.with_untracked(cx, |entry| entry.icon);
+    let ordinal =
+        move |runtime: &mut Runtime| plugin_ordinal(entry.with(runtime, |entry| entry.slot));
+    sidebar_item(
+        bind(move |runtime| entry.with(runtime, |entry| entry.title.clone())),
+        icon,
+        bind(move |runtime| current.get(runtime) == ordinal(runtime)),
+    )
+    .on_click(move |cx, _| {
+        let target = cx.untrack(ordinal);
+        navigation.show(cx, target);
+    })
 }

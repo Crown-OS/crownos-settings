@@ -1,82 +1,59 @@
 //! The two kinds of state a page can see, joined into one.
 //!
-//! Up to now a page was handed a [`ConfigStore`] and that was the whole world:
-//! seven RON files, every value declared by the user, nothing to discover. Wi-Fi
-//! breaks that, because "which networks are in range" is not a setting — it is a
-//! fact about the room, it changes while the window is open, and writing it to
-//! `~/.config/crownos/wifi.ron` would be a lie.
+//! * [`Settings`] — declared, persisted, authoritative because the user said
+//!   so. Kept private here and reached only through the delegating
+//!   [`get`](Store::get) / [`set`](Store::set) / [`section`](Store::section)
+//!   methods, so that "mutate without persisting" stays unspeakable.
+//! * The backends' states — observed, transient, authoritative because the
+//!   hardware (or a daemon) said so. Public signals, because there is nothing
+//!   to protect: a page reads the snapshot and pushes commands at it, and
+//!   nothing needs saving.
 //!
-//! So there are two halves now, and [`Store`] is both of them:
-//!
-//! * [`ConfigStore`] — declared, persisted, authoritative because the user said
-//!   so. Kept private here, exactly as it keeps its own sections private, and
-//!   reached only through the delegating [`get`](Store::get) /
-//!   [`set`](Store::set) / [`update`](Store::update) / [`section`](Store::section)
-//!   methods so that "mutate without persisting" stays unspeakable.
-//! * [`WifiState`] — observed, transient, authoritative because the hardware
-//!   said so. A public field, because it has no such invariant to protect: a
-//!   page reads its snapshot and pushes commands at it, and nothing needs
-//!   saving. [`WallpaperState`] is the same kind of thing, with the crownpaper
-//!   daemon standing where the hardware stands.
-//!
-//! Pages and controls are generic over neither — they name `Store` — so the
-//! split costs a page exactly one decision: `store.get(some::Key)` for a
-//! preference, `store.wifi` for a fact.
+//! Every field is a `Copy` handle into the reactive runtime, so a [`Store`] is
+//! passed around by value and a binding that reads one fact re-runs when that
+//! fact changes, and only then.
 //!
 //! ## Who owns the seam
 //!
 //! When the two halves disagree, the fact wins and the preference is corrected:
 //! [`mirror_wifi`](Store::mirror_wifi) writes NetworkManager's radio state and
-//! current SSID back into `wifi.ron` every time a snapshot arrives. That is not
-//! this app talking to itself — it is how the CrownOS bar and every other app
-//! watching that file learn what the network is doing, without each of them
-//! opening its own D-Bus connection.
-//!
-//! It is cheap because [`ConfigStore::set`] already drops writes that change
-//! nothing, and the overwhelming majority of snapshots change neither field.
+//! current SSID back into `wifi.ron` every time a snapshot arrives. That is how
+//! the CrownOS bar and every other app watching that file learn what the
+//! network is doing, without each of them opening its own D-Bus connection.
+//! It is cheap because [`Settings::set`] drops writes that change nothing.
 
 use crownos_config::Key;
 use crownos_config::schema::{appearance, wifi};
+use crownui::prelude::{Cx, Runtime, Signal};
 
-use crate::config::{ConfigStore, Section};
-use crate::net::crownconnect::CrossDeviceState;
-use crate::net::outputs::OutputState;
-use crate::net::wallpaper::{WallpaperEvent, WallpaperState};
-use crate::net::wifi::{WifiEvent, WifiSnapshot, WifiState};
+use crate::config::{Section, Settings};
+use crate::net::crownconnect::{CrossDeviceState, crownconnect_worker};
+use crate::net::outputs::{OutputState, output_worker};
+use crate::net::plugins::{PluginsState, plugins_worker};
+use crate::net::wallpaper::{WallpaperEvent, WallpaperState, wallpaper_worker};
+use crate::net::wifi::{WifiEvent, WifiSnapshot, WifiState, wifi_worker};
 
-/// Everything a page is allowed to see: the settings on disk, and the network
-/// as it actually is.
-///
-/// This is the state every [`crate::pages`] builder and every
-/// [`crate::controls`] widget is written against, and — through
-/// [`xilem::core::lens`] in [`crate::app`] — all they can reach. Navigation,
-/// window chrome and the page registry are deliberately not in here.
+/// Everything a page is allowed to see: the settings on disk, and the system
+/// as it actually is. Navigation and window chrome are deliberately not in
+/// here.
+#[derive(Debug, Clone, Copy)]
 pub struct Store {
-    /// Private for the same reason [`ConfigStore`]'s own fields are: every
-    /// write has to go through something that persists it.
-    config: ConfigStore,
-    /// Public because there is nothing to protect — it is a mirror of the
-    /// world, and the page both reads it and posts commands into it.
-    pub wifi: WifiState,
-    /// The other observed half: the crownpaper daemon and the thumbnails the
-    /// Appearance page's picker draws. Public for the same reason `wifi` is.
-    pub wallpaper: WallpaperState,
+    /// Private: every write has to go through something that persists it.
+    config: Settings,
+    pub wifi: Signal<WifiState>,
+    /// The crownpaper daemon and the thumbnails the Appearance page draws.
+    pub wallpaper: Signal<WallpaperState>,
     /// The monitors the compositor is driving, and the edits not yet applied
-    /// to them. A fact like the other two — the compositor owns the
-    /// arrangement and persists it, so nothing here is written to a RON file.
-    pub outputs: OutputState,
+    /// to them. The compositor persists the arrangement, so nothing here is
+    /// written to a RON file.
+    pub outputs: Signal<OutputState>,
     /// The devices crownconnect pairs with, and the pairing flow in progress.
-    /// A fact like the others: the daemon owns pairings and persists them.
-    pub cross_device: CrossDeviceState,
-    /// The microphones this machine has, and which one "Automatic" currently
-    /// resolves to.
-    ///
-    /// The third fact, and the only one that never changes while the window is
-    /// open — see [`crate::net::audio`] for why it is read once instead of
-    /// watched. Held here rather than being read by the Input page because a
-    /// page builder runs on every rebuild, and enumerating an audio host on
-    /// every frame of a slide transition would be absurd.
-    pub microphones: Microphones,
+    pub cross_device: Signal<CrossDeviceState>,
+    /// The themes and plugins crownplugind runs, and their settings.
+    pub plugins: Signal<PluginsState>,
+    /// The microphones this machine has — read once, see
+    /// [`crate::net::audio`] for why it is not watched.
+    pub microphones: Signal<Microphones>,
 }
 
 /// What is plugged in, as the Input page's device picker needs it.
@@ -100,120 +77,103 @@ impl Microphones {
 }
 
 impl Store {
-    /// Load the settings off disk and start with an empty view of the network.
-    ///
-    /// "Empty" is the honest starting point: the worker has not run yet, so
-    /// `wifi.snapshot` is `None` and the page draws its looking-for-networks
-    /// state until the first [`WifiEvent::Snapshot`] lands.
-    pub fn load() -> Self {
-        Self {
-            config: ConfigStore::load(),
-            wifi: WifiState::default(),
-            wallpaper: WallpaperState::default(),
-            outputs: OutputState::default(),
-            cross_device: CrossDeviceState::default(),
-            microphones: Microphones::probe(),
-        }
+    /// Load the settings off disk and start with an empty view of the system:
+    /// no worker has run yet, so every page starts in its "looking…" state.
+    pub fn load(runtime: &mut Runtime) -> Self {
+        let config = Settings::load(runtime);
+        Self::with(runtime, config, Microphones::probe())
     }
 
     /// A store of nothing but defaults, for tests that must not touch the
     /// filesystem — or NetworkManager, or the audio host.
     #[cfg(test)]
-    pub fn defaults() -> Self {
+    pub fn defaults(runtime: &mut Runtime) -> Self {
+        let config = Settings::defaults(runtime);
+        Self::with(runtime, config, Microphones::default())
+    }
+
+    fn with(runtime: &mut Runtime, config: Settings, microphones: Microphones) -> Self {
         Self {
-            config: ConfigStore::defaults(),
-            wifi: WifiState::default(),
-            wallpaper: WallpaperState::default(),
-            outputs: OutputState::default(),
-            cross_device: CrossDeviceState::default(),
-            microphones: Microphones::default(),
+            config,
+            wifi: runtime.signal(WifiState::default()),
+            wallpaper: runtime.signal(WallpaperState::default()),
+            outputs: runtime.signal(OutputState::default()),
+            cross_device: runtime.signal(CrossDeviceState::default()),
+            plugins: runtime.signal(PluginsState::default()),
+            microphones: runtime.signal(microphones),
         }
+    }
+
+    /// Start following the config files and every backend, for as long as the
+    /// calling component lives.
+    pub fn start(self, cx: &mut Cx) {
+        self.config.watch(cx);
+        wifi_worker(cx, self.wifi, move |cx, event| self.mirror_wifi(cx, event));
+        wallpaper_worker(cx, self.wallpaper, move |cx, event| {
+            self.mirror_wallpaper(cx, event);
+        });
+        output_worker(cx, self.outputs);
+        crownconnect_worker(cx, self.cross_device);
+        plugins_worker(cx, self.plugins);
     }
 
     // --- MARK: Config delegation ---
 
-    /// The current value of one section. See [`ConfigStore::section`].
-    pub fn section<S: Section>(&self) -> &S {
-        self.config.section::<S>()
+    /// Reads one section. See [`Settings::section`].
+    pub fn section<S: Section, R>(self, runtime: &mut Runtime, read: impl FnOnce(&S) -> R) -> R {
+        self.config.section(runtime, read)
     }
 
-    /// The current value of one key. See [`ConfigStore::get`].
-    pub fn get<K: Key>(&self, key: K) -> K::Value
+    /// The current value of one key. See [`Settings::get`].
+    pub fn get<K: Key>(self, runtime: &mut Runtime, key: K) -> K::Value
     where
         K::Section: Section,
     {
-        self.config.get(key)
+        self.config.get(runtime, key)
     }
 
-    /// Write one key and persist its section. See [`ConfigStore::set`].
-    pub fn set<K: Key>(&mut self, key: K, value: K::Value)
+    /// Write one key and persist its section. See [`Settings::set`].
+    pub fn set<K: Key>(self, runtime: &mut Runtime, key: K, value: K::Value)
     where
         K::Section: Section,
     {
-        self.config.set(key, value);
-    }
-
-    /// Edit a section and persist it. See [`ConfigStore::update`].
-    ///
-    /// Delegated for completeness — every page so far binds single keys, so
-    /// this is the multi-field escape hatch nothing has needed yet.
-    #[allow(dead_code)]
-    pub fn update<S: Section>(&mut self, edit: impl FnOnce(&mut S)) {
-        self.config.update(edit);
-    }
-
-    /// The config half, for the watchers that adopt external edits.
-    ///
-    /// The one hole in the "private field" story, and a deliberate one:
-    /// [`ConfigStore::watchers`] needs a projection down to the store it fills,
-    /// and it can only be handed a `fn(&mut State) -> &mut ConfigStore`.
-    pub fn config_mut(&mut self) -> &mut ConfigStore {
-        &mut self.config
+        self.config.set(runtime, key, value);
     }
 
     // --- MARK: The seam ---
 
     /// Copy what NetworkManager just said into `wifi.ron`.
     ///
-    /// Runs on the main thread, once per event, alongside
-    /// [`WifiState`]'s own handling — see [`crate::net::wifi::wifi_worker`].
-    /// Only snapshots carry the two facts worth mirroring; a `Connecting` or an
-    /// error is this window's business alone.
-    ///
     /// Note the direction. Every *other* control in this app writes the config
     /// and expects the system to follow. Here the system leads and the config
     /// follows, because the radio can be turned off by a laptop's function key,
     /// by `nmcli`, or by another app, and none of those go through us.
-    pub fn mirror_wifi(&mut self, event: &WifiEvent) {
+    pub fn mirror_wifi(self, runtime: &mut Runtime, event: &WifiEvent) {
         let WifiEvent::Snapshot(snapshot) = event else {
             return;
         };
         let (enabled, network) = mirrored_wifi(snapshot);
-        self.config.set(wifi::Enabled, enabled);
-        self.config.set(wifi::Network, network);
+        self.config.set(runtime, wifi::Enabled, enabled);
+        self.config.set(runtime, wifi::Network, network);
     }
 
-    /// Copy what crownpaper just said into `appearance.ron`.
-    ///
-    /// The same seam as [`mirror_wifi`](Self::mirror_wifi), for the same
-    /// reason: the wallpaper can be changed by `crownpaper set` in a terminal
-    /// or by any other app, and none of those go through us — so the daemon's
-    /// `Changed` leads and the config follows. Only that one event carries a
-    /// fact worth persisting; everything else (thumbnails, connectivity,
-    /// errors) is this window's business alone.
-    pub fn mirror_wallpaper(&mut self, event: &WallpaperEvent) {
+    /// Copy what crownpaper just said into `appearance.ron` — the same seam as
+    /// [`mirror_wifi`](Self::mirror_wifi), for the same reason: the wallpaper
+    /// can be changed by `crownpaper set` in a terminal, and none of those go
+    /// through us.
+    pub fn mirror_wallpaper(self, runtime: &mut Runtime, event: &WallpaperEvent) {
         let WallpaperEvent::Current(path) = event else {
             return;
         };
-        self.config.set(appearance::Wallpaper, path.clone());
+        self.config
+            .set(runtime, appearance::Wallpaper, path.clone());
     }
 }
 
 /// What `wifi.ron`'s two fields should say, given a snapshot.
 ///
-/// Split out from [`Store::mirror_wifi`] so the rule can be asserted without a
-/// store — writing through a real [`ConfigStore`] means writing a real file, and
-/// a unit test has no business doing that to the machine it runs on.
+/// Split out from [`Store::mirror_wifi`] so the rule can be asserted without
+/// writing a real file.
 fn mirrored_wifi(snapshot: &WifiSnapshot) -> (bool, Option<String>) {
     let network = snapshot
         .connection
@@ -225,16 +185,9 @@ fn mirrored_wifi(snapshot: &WifiSnapshot) -> (bool, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::wifi::{ActiveWifi, LinkState, WifiSnapshot};
-    use crownos_config::schema::Wifi;
+    use crate::net::wifi::{ActiveWifi, LinkState};
+    use crownos_config::schema::{Appearance, Wifi};
 
-    /// Nothing in here is allowed to make [`ConfigStore`] persist: a write goes
-    /// to a real RON file under `$CROWN_CONFIG_DIR` (or the developer's own
-    /// `~/.config/crownos` when that isn't set), and the one test in
-    /// [`crate::config`] that legitimately needs a config dir owns that
-    /// process-global variable for its duration. So the rule is tested pure,
-    /// through [`mirrored_wifi`], and the store is only used for assertions
-    /// that provably change nothing.
     fn joined(ssid: &str) -> WifiSnapshot {
         WifiSnapshot {
             radio_enabled: true,
@@ -274,45 +227,47 @@ mod tests {
 
     #[test]
     fn only_snapshots_are_mirrored() {
-        let mut store = Store::defaults();
+        let mut runtime = Runtime::new();
+        let store = Store::defaults(&mut runtime);
 
-        store.mirror_wifi(&WifiEvent::Connecting("Attic".to_owned()));
-        store.mirror_wifi(&WifiEvent::Error("nope".to_owned()));
-        store.mirror_wifi(&WifiEvent::Unavailable("gone".to_owned()));
+        store.mirror_wifi(&mut runtime, &WifiEvent::Connecting("Attic".to_owned()));
+        store.mirror_wifi(&mut runtime, &WifiEvent::Error("nope".to_owned()));
+        store.mirror_wifi(&mut runtime, &WifiEvent::Unavailable("gone".to_owned()));
 
         assert_eq!(
-            store.section::<Wifi>(),
-            &Wifi::default(),
+            store.section(&mut runtime, Wifi::clone),
+            Wifi::default(),
             "a transient event is this window's business alone"
         );
     }
 
     #[test]
     fn only_the_daemons_current_wallpaper_is_mirrored() {
-        use crownos_config::schema::Appearance;
+        let mut runtime = Runtime::new();
+        let store = Store::defaults(&mut runtime);
 
-        let mut store = Store::defaults();
-
-        // Same rule as the Wi-Fi seam: these change nothing, and — because
-        // `ConfigStore::set` skips no-op writes — provably touch no file.
-        store.mirror_wallpaper(&WallpaperEvent::Online);
-        store.mirror_wallpaper(&WallpaperEvent::Offline);
-        store.mirror_wallpaper(&WallpaperEvent::Error("nope".to_owned()));
-        store.mirror_wallpaper(&WallpaperEvent::Found(vec!["/w/dunes.png".to_owned()]));
+        store.mirror_wallpaper(&mut runtime, &WallpaperEvent::Online);
+        store.mirror_wallpaper(&mut runtime, &WallpaperEvent::Offline);
+        store.mirror_wallpaper(&mut runtime, &WallpaperEvent::Error("nope".to_owned()));
+        store.mirror_wallpaper(
+            &mut runtime,
+            &WallpaperEvent::Found(vec!["/w/dunes.png".to_owned()]),
+        );
 
         assert_eq!(
-            store.section::<Appearance>(),
-            &Appearance::default(),
+            store.section(&mut runtime, Appearance::clone),
+            Appearance::default(),
             "a transient event is this window's business alone"
         );
     }
 
     #[test]
-    fn the_delegated_reads_see_the_same_store() {
-        let store = Store::defaults();
-        let section = store.section::<Wifi>();
+    fn the_delegated_reads_see_the_same_settings() {
+        let mut runtime = Runtime::new();
+        let store = Store::defaults(&mut runtime);
+        let section = store.section(&mut runtime, Wifi::clone);
 
-        assert_eq!(store.get(wifi::Enabled), section.enabled);
-        assert_eq!(store.get(wifi::Network), section.network);
+        assert_eq!(store.get(&mut runtime, wifi::Enabled), section.enabled);
+        assert_eq!(store.get(&mut runtime, wifi::Network), section.network);
     }
 }

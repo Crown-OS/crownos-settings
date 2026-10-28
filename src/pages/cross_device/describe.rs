@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use blinc_icons::icons;
+use crownui::kit::icons;
 
 use crate::net::crownconnect::{Battery, DeviceClass, DeviceInfo, Edge, Feature, LinkKind};
 

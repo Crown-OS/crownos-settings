@@ -4,31 +4,45 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-blinc_icons = "0.5.1"
+anyhow = "1"
 # Only to enumerate microphones for the Input page — no stream is ever opened
 # here. It is `cpal` specifically because the name this app writes to
 # `input.ron` has to be one crowndictator can reopen, and crowndictator records
 # through `cpal`. Same version it uses. See `src/net/audio.rs`.
 cpal = "0.16"
-crownos-config = { git = "https://github.com/crown-os/crownos-config" }
+# The schema and its typed keys. The same checkout CrownUI's `crownconfig`
+# builds against, so a section read here is the type the kit's theme reads.
+crownos-config = { path = "../crownos-config", default-features = false }
+# Live-watching config sections without opening a second notify backend.
+crownconfig = { path = "../crownui/crownconfig" }
+sha2 = "0.10"
 # The `crownconnect` protocol as the daemon declares it, for the Cross-device
 # page. Without `daemon` it is the schema alone, like `crownpaper` below.
-crownconnect-linux = { git = "https://github.com/Crown-OS/crownconnect-linux", default-features = false }
+crownconnect-linux = { path = "../crownconnect-linux", default-features = false }
 # The wallpaper backend's transport: the typed crownpaper protocol plus the
-# `tokio` adapter that drives its socket on xilem's own runtime, the same way
-# `nmrs` drives D-Bus for the Wi-Fi worker.
-crownos-ipc = { git = "https://github.com/Crown-OS/crownos-ipc", features = [
-  "tokio",
-] }
+# `tokio` adapter that drives its socket on CrownUI's task runtime.
+crownos-ipc = { path = "../crownos-ipc", features = ["tokio"] }
 # The daemon's own declaration of its protocol, so this client cannot drift
 # from it. Without `daemon` it is the schema alone — none of crownpaper's
 # rendering stack is built here.
-crownpaper = { git = "https://github.com/crown-os/crownpaper", default-features = false }
-crownuikit = { git = "https://github.com/crown-os/crownuikit" }
-# `nmrs` exposes NetworkManager's change signals as a `futures` Stream, and
-# xilem re-exports tokio but not futures — so this is here purely for
-# `StreamExt::next` in the Wi-Fi worker's select loop. Already in the graph as a
-# transitive dependency of `nmrs` itself.
+crownpaper = { path = "../crownpaper", default-features = false }
+# The crownplugind contract, for the Plugins & Themes page. The daemon is the
+# only writer of `plugins.ron`; this app asks it over IPC.
+crownplugin-proto = { path = "../crownos-plugins/proto" }
+# The declarative settings fields a plugin contributes, and their validation.
+crownplugin-model = { path = "../crownos-plugins/model" }
+# `static` links Impeller into the binary, so it runs without an rpath to the
+# SDK the build downloads.
+crownui = { path = "../crownui/crownui", features = ["static"] }
+# The lock screen's own layout, paint and transitions, for the Lock Screen
+# page's preview — so what it shows is what the compositor draws. Without
+# `pam`: a preview never checks a password.
+lockscreen = { path = "../crownpositor/lockscreen" }
+# Only to ask `lockscreen` when the preview's clock next reads differently;
+# already in the graph through it.
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+# `nmrs` exposes NetworkManager's change signals as a `futures` Stream, so this
+# is here purely for `StreamExt::next` in the Wi-Fi worker's select loop.
 futures-util = { version = "0.3", default-features = false }
 # Thumbnail decoding for the wallpaper picker, on the blocking pool. The same
 # four formats crownpaper itself decodes, and nothing else — a file the picker
@@ -40,37 +54,48 @@ image = { version = "0.25", default-features = false, features = [
   "bmp",
 ] }
 # The Wi-Fi backend. Talks to NetworkManager over D-Bus and never leaves
-# `src/net`. Note it also turns on tokio's `macros` feature, which is what makes
-# `xilem::tokio::select!` available — xilem's own tokio dependency does not
-# enable it.
+# `src/net`.
 nmrs = "3.4.2"
-# Encodes the Cross-device pairing invitation. No `image` feature: the modules
-# are rasterized straight into a brush, one pixel each.
+# Encodes the Cross-device pairing invitation; the modules are painted as
+# rectangles, so no image backend is needed.
 qrcode = { version = "0.14", default-features = false }
 # Only for naming the bounds `crownos-config`'s load/save need, so this crate can be
-# generic over "some config section" instead of listing every one by hand. No
-# `derive` — the schema types are defined in `crownos-config`.
+# generic over "some config section" instead of listing every one by hand.
 serde = "1"
-# Present only to turn on tokio's `net` feature, which is what carries
-# `io::unix::AsyncFd` — the Display page's Wayland connection is polled through
-# one. The code reaches tokio through `xilem::tokio` like the rest of `src/net`;
-# this is the same crate, so the feature applies there too. Named here rather
-# than left to `nmrs` because a transitive feature is not a promise.
-tokio = { version = "1", default-features = false, features = ["net"] }
+# CrownUI runs `cx.spawn` futures on tokio; the backends need its timers,
+# channels, `select!` and — for the Display page's Wayland connection —
+# `io::unix::AsyncFd`.
+tokio = { version = "1", default-features = false, features = [
+  "macros",
+  "net",
+  "rt",
+  "sync",
+  "time",
+] }
 # The Display page talks to the compositor over `zwlr_output_management_v1`
-# on its own Wayland connection — separate from the one winit holds for the
+# on its own Wayland connection — separate from the one CrownUI holds for the
 # window, because the protocol is a session-wide conversation about every
 # monitor rather than anything to do with this app's surface.
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", default-features = false, features = [
   "client",
 ] }
-winit = "0.30.13"
-xilem = "0.4.0"
+
+[dev-dependencies]
+# Drives the whole window headlessly: every page built, every sidebar row clicked.
+crowntest = { path = "../crownui/crowntest" }
+# Offscreen Impeller renders of every page, for looking at (an ignored test).
+impeller = { path = "../crownui/impeller", features = ["static"] }
+taffy-layout = { path = "../crownui/taffy-layout" }
+
+# crownconnect-linux names crownos-ipc by its git URL, crownpaper by its path:
+# one checkout for both, or their IPC traits would be two different crates.
+[patch."https://github.com/crown-os/crownos-config"]
+crownos-config = { path = "../crownos-config" }
+
+[patch."https://github.com/crown-os/crownos-ipc"]
+crownos-ipc = { path = "../crownos-ipc" }
 
 [profile.dev]
 # See https://doc.rust-lang.org/cargo/reference/profiles.html#split-debuginfo
 split-debuginfo = "unpacked"
-
-[patch.crates-io]
-vello_encoding = { path = "../vendor/vello_encoding-0.6.0" }

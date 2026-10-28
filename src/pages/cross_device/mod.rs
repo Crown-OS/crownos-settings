@@ -1,7 +1,7 @@
 //! The Cross-device page: everything from pairing the first device to the
 //! per-device features, over the crownconnect daemon.
 //!
-//! One screen at a time, picked by [`build`] in order of authority: the
+//! One screen at a time, picked by [`screen`] in order of authority: the
 //! daemon's reachability, then a pairing flow in progress, then an open
 //! device, then the list — or the onboarding card when nothing is paired.
 
@@ -12,70 +12,97 @@ mod onboarding;
 mod pairing;
 mod parts;
 
-use blinc_icons::icons;
-use crownuikit::widgets::{Tone, callout, spinner};
-use xilem::WidgetView;
+use crownui::kit::{CalloutOptions, Tone, callout, icons, spinner};
+use crownui::prelude::{AnyView, Cx, Signal, Styled, View, keyed};
 
-use crate::net::crownconnect::{CrossDeviceState, Link};
-use crate::pages::{PageDescriptor, PageView, page};
+use crate::layout::optional;
+use crate::net::crownconnect::{CrossDeviceState, DeviceId, Link};
+use crate::pages::{PageDescriptor, page};
 use crate::state::Store;
+use pairing::Stage;
 
 pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Cross-device",
+    slug: "cross-device",
     icon: icons::MONITOR_SMARTPHONE,
     build,
 };
 
-fn build(store: &Store) -> PageView {
-    let cross_device = &store.cross_device;
-    let mut cards: Vec<PageView> = cross_device
-        .error
-        .clone()
-        .map(|message| parts::error_card(message).boxed())
-        .into_iter()
-        .collect();
-    cards.extend(screen(cross_device));
-    page(&PAGE, cards)
+/// What the page's structure depends on; everything finer is bound.
+#[derive(Debug, Clone, PartialEq)]
+enum Screen {
+    Connecting,
+    Offline,
+    Pairing(Stage),
+    Detail { id: DeviceId, name: String },
+    Onboarding,
+    Devices,
 }
 
-fn screen(state: &CrossDeviceState) -> Vec<PageView> {
+fn screen(state: &CrossDeviceState) -> Screen {
     match state.link {
-        Link::Connecting => {
-            return vec![
-                parts::quiet_card(
-                    spinner().size(parts::ROW_SPINNER),
-                    "Connecting to CrownConnect…",
-                )
-                .boxed(),
-            ];
-        }
-        Link::Offline => return vec![offline_notice().boxed()],
+        Link::Connecting => return Screen::Connecting,
+        Link::Offline => return Screen::Offline,
         Link::Online => {}
     }
     if let Some(session) = state.pairing.as_ref() {
-        return pairing::cards(state, session);
+        return Screen::Pairing(Stage::of(session, state.now_unix_ms));
     }
     if let Some(device) = state.selected.and_then(|id| state.device(id)) {
-        return detail::cards(state, device);
+        return Screen::Detail {
+            id: device.info.id,
+            name: device.info.name.clone(),
+        };
     }
     if state.trusted().next().is_none() {
-        return vec![onboarding::card().boxed()];
+        return Screen::Onboarding;
     }
-    vec![devices::card(state).boxed()]
+    Screen::Devices
 }
 
-fn offline_notice() -> impl WidgetView<Store> {
+fn build(_cx: &mut Cx, store: Store) -> AnyView {
+    let state = store.cross_device;
+    page(
+        &PAGE,
+        (
+            optional(
+                move |runtime| state.with(runtime, |state| state.error.clone()),
+                move |_, message| parts::error_card(state, message),
+            ),
+            keyed(
+                move |runtime| state.with(runtime, screen),
+                move |cx, screen| screen_view(cx, state, screen),
+            ),
+        ),
+    )
+}
+
+fn screen_view(cx: &mut Cx, state: Signal<CrossDeviceState>, screen: Screen) -> AnyView {
+    match screen {
+        Screen::Connecting => parts::quiet_card(
+            spinner().size(parts::ROW_SPINNER),
+            "Connecting to CrownConnect…",
+        )
+        .boxed(),
+        Screen::Offline => offline_notice().boxed(),
+        Screen::Pairing(stage) => pairing::cards(state, stage),
+        Screen::Detail { id, name } => detail::cards(cx, state, id, name),
+        Screen::Onboarding => onboarding::card(state).boxed(),
+        Screen::Devices => devices::card(cx, state).boxed(),
+    }
+}
+
+fn offline_notice() -> impl View {
     callout(Tone::Neutral, "CrownConnect is not running")
         .body("Start the crownconnect service to pair and use your devices. This page reconnects on its own.")
         .icon(icons::UNLINK)
-        .view()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::net::crownconnect::{
-        Device, DeviceClass, DeviceId, DeviceInfo, Feature, FeatureSet, LinkKind, PairingOutcome,
+        Device, DeviceClass, DeviceInfo, Feature, FeatureSet, LinkKind, PairingOutcome,
         PairingPrompt, PairingSession,
     };
 
@@ -102,41 +129,52 @@ mod tests {
     }
 
     #[test]
-    fn every_screen_builds() {
-        let mut store = Store::defaults();
-        let mut build_now = |edit: &dyn Fn(&mut CrossDeviceState)| {
-            edit(&mut store.cross_device);
-            let _view: PageView = build(&store);
-        };
+    fn screens_follow_the_order_of_authority() {
+        let mut state = CrossDeviceState::default();
+        assert_eq!(screen(&state), Screen::Connecting);
 
-        build_now(&|state| state.link = Link::Offline);
-        build_now(&|state| {
-            state.link = Link::Online;
-            state.error = Some("Could not start pairing".to_owned());
+        state.link = Link::Offline;
+        assert_eq!(screen(&state), Screen::Offline);
+
+        state.link = Link::Online;
+        assert_eq!(screen(&state), Screen::Onboarding);
+
+        state.devices = vec![phone()];
+        assert_eq!(screen(&state), Screen::Devices);
+
+        state.selected = Some(PHONE);
+        assert_eq!(
+            screen(&state),
+            Screen::Detail {
+                id: PHONE,
+                name: "Pixel".to_owned()
+            }
+        );
+
+        state.pairing = Some(PairingSession::default());
+        assert_eq!(screen(&state), Screen::Pairing(Stage::Waiting));
+
+        state.pairing = Some(PairingSession {
+            prompt: Some(PairingPrompt {
+                id: PHONE,
+                name: "Pixel".to_owned(),
+                code: "123456".to_owned(),
+                answered: false,
+            }),
+            ..PairingSession::default()
         });
-        build_now(&|state| state.pairing = Some(PairingSession::default()));
-        build_now(&|state| {
-            state.pairing = Some(PairingSession {
-                prompt: Some(PairingPrompt {
-                    id: PHONE,
-                    name: "Pixel".to_owned(),
-                    code: "123456".to_owned(),
-                    answered: false,
-                }),
-                ..PairingSession::default()
-            });
+        assert!(matches!(
+            screen(&state),
+            Screen::Pairing(Stage::Compare { .. })
+        ));
+
+        state.pairing = Some(PairingSession {
+            outcome: Some(PairingOutcome::Refused),
+            ..PairingSession::default()
         });
-        build_now(&|state| {
-            state.pairing = Some(PairingSession {
-                outcome: Some(PairingOutcome::Refused),
-                ..PairingSession::default()
-            });
-        });
-        build_now(&|state| {
-            state.pairing = None;
-            state.devices = vec![phone()];
-        });
-        build_now(&|state| state.selected = Some(PHONE));
-        build_now(&|state| state.confirming_forget = true);
+        assert_eq!(
+            screen(&state),
+            Screen::Pairing(Stage::Outcome(PairingOutcome::Refused))
+        );
     }
 }

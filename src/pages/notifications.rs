@@ -1,22 +1,26 @@
 //! The Notifications page.
 
-use crate::layout::{setting_row_desc, setting_row_icon, settings_card_titled, settings_divider};
-use blinc_icons::icons;
 use crownos_config::schema::notification;
+use crownui::kit::icons;
+use crownui::prelude::{AnyView, Cx, Semantic, bind};
 
 use crate::controls::switch;
-use crate::pages::{PageDescriptor, PageView, page};
+use crate::layout::{
+    glyph, setting_row_desc, setting_row_icon, settings_card_titled, settings_divider,
+};
+use crate::pages::{PageDescriptor, page};
 use crate::state::Store;
 
 pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Notifications",
+    slug: "notifications",
     icon: icons::BELL,
     build,
 };
 
-fn build(store: &Store) -> PageView {
+fn build(cx: &mut Cx, store: Store) -> AnyView {
     // The master switch gates the other two rows.
-    let enabled = store.get(notification::Enabled);
+    let disabled = move || bind(move |runtime| !store.get(runtime, notification::Enabled));
 
     page(
         &PAGE,
@@ -24,21 +28,21 @@ fn build(store: &Store) -> PageView {
             "Notifications",
             (
                 setting_row_icon(
-                    icons::BELL,
+                    glyph(icons::BELL),
                     "Allow notifications",
-                    switch(store, notification::Enabled),
+                    switch(cx, store, notification::Enabled),
                 ),
                 settings_divider(),
                 setting_row_desc(
                     "Do Not Disturb",
                     "Keep notifications in the tray without banners or sounds",
-                    switch(store, notification::DoNotDisturb).disabled(!enabled),
+                    switch(cx, store, notification::DoNotDisturb).disabled(disabled()),
                 ),
                 settings_divider(),
                 setting_row_desc(
                     "Show previews",
                     "Include message content in banners",
-                    switch(store, notification::ShowPreviews).disabled(!enabled),
+                    switch(cx, store, notification::ShowPreviews).disabled(disabled()),
                 ),
             ),
         ),),

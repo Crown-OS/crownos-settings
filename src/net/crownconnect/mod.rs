@@ -16,14 +16,14 @@ mod worker;
 pub use crownconnect_linux::ipc::proto::{
     Battery, DeviceClass, DeviceId, DeviceInfo, Edge, Feature, FeatureSet, FeatureState, LinkKind,
 };
-pub use state::{
-    CrossDeviceState, Device, Link, PairingInvite, PairingOutcome, PairingPrompt, PairingSession,
-};
+#[cfg(test)]
+pub use state::PairingPrompt;
+pub use state::{CrossDeviceState, Device, Link, PairingInvite, PairingOutcome, PairingSession};
 
 use crownconnect_linux::ipc::proto;
-use xilem::ViewCtx;
-use xilem::core::{NoElement, View};
-use xilem::view::worker_raw;
+use crownui::prelude::{Cx, Signal};
+
+use crate::util::worker::spawn_worker;
 
 /// Everything the Cross-device page can ask of the daemon.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,17 +77,11 @@ pub enum CrossDeviceEvent {
     Error(String),
 }
 
-/// The cross-device backend, as an element-less view for
-/// [`fork`](xilem::core::fork)'s alongside slot. Lives as long as the window.
-pub fn crownconnect_worker<State>(
-    cross_device: fn(&mut State) -> &mut CrossDeviceState,
-) -> impl View<State, (), ViewCtx, Element = NoElement> + Send + Sync
-where
-    State: 'static,
-{
-    worker_raw(
-        worker::run,
-        move |state: &mut State, sender| cross_device(state).attach(sender),
-        move |state: &mut State, event: CrossDeviceEvent| cross_device(state).apply(event),
-    )
+/// Starts the cross-device backend for as long as the calling component
+/// lives — the window.
+pub fn crownconnect_worker(cx: &mut Cx, cross_device: Signal<CrossDeviceState>) {
+    let sender = spawn_worker(cx, worker::run, move |cx, event| {
+        cross_device.update(cx, |state| state.apply(event));
+    });
+    cross_device.update(cx, |state| state.attach(sender));
 }
