@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "accessibility"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -636,7 +636,7 @@ checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
 name = "crownconfig"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crownos-config",
  "serde",
@@ -687,7 +687,7 @@ dependencies = [
 
 [[package]]
 name = "crownpaper"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "crownos-ipc",
  "naga",
@@ -759,7 +759,7 @@ dependencies = [
 
 [[package]]
 name = "crowntest"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "geometry",
  "graphics",
@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "crownui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "geometry",
  "gesture",
@@ -1185,14 +1185,14 @@ dependencies = [
 
 [[package]]
 name = "geometry"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "gesture"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "geometry",
  "input",
@@ -1235,7 +1235,7 @@ dependencies = [
 
 [[package]]
 name = "graphics"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "geometry",
  "smallvec",
@@ -1361,7 +1361,7 @@ checksum = "65b27460c2c92b037f3f94c538ed9a3342f3fdf923606781629ccb35f82d042a"
 
 [[package]]
 name = "impeller"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ash",
  "geometry",
@@ -1421,7 +1421,7 @@ dependencies = [
 
 [[package]]
 name = "input"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "geometry",
  "serde",
@@ -1430,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "inspect"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
 ]
@@ -1540,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "layouting"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "geometry",
 ]
@@ -1636,7 +1636,7 @@ dependencies = [
 
 [[package]]
 name = "mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.23.1",
  "input",
@@ -1698,7 +1698,7 @@ dependencies = [
 
 [[package]]
 name = "motion"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "geometry",
 ]
@@ -2158,7 +2158,7 @@ checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 
 [[package]]
 name = "reactive"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "slotmap",
  "smallvec",
@@ -2295,7 +2295,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "accessibility",
  "crossbeam-channel",
@@ -2395,7 +2395,7 @@ checksum = "2ab42ca02749e120097e328d91d415325bdf43b1c72c4c8badf37375fe40a813"
 
 [[package]]
 name = "semantics"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "geometry",
  "input",
@@ -2697,7 +2697,7 @@ dependencies = [
 
 [[package]]
 name = "taffy-layout"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "geometry",
  "layouting",
@@ -3000,7 +3000,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "view"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "geometry",
  "gesture",
@@ -3232,7 +3232,7 @@ dependencies = [
 
 [[package]]
 name = "widgets"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blinc_icons",
  "crownconfig",
@@ -3261,7 +3261,7 @@ dependencies = [
 
 [[package]]
 name = "windowing"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bitflags 2.13.1",
  "crownos-protocols",
