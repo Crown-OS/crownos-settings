@@ -11,11 +11,10 @@
 //! enum for everything the page can ask, a [`WallpaperEvent`] enum for
 //! everything the backend can say, and a [`WallpaperState`] living in the
 //! [`Store`](crate::state::Store) that holds the last word on each subject plus
-//! the command channel. No `crownos_ipc` or `image` type escapes upward; the
-//! one foreign type that does — [`ImageBrush`] — is xilem's own bitmap
-//! currency, cheap to clone (an `Arc` under the hood) and compared by identity
-//! on rebuild, so holding them in the store is exactly what the `image` view
-//! wants.
+//! the command channel. No `crownos_ipc` or `image` type escapes upward: the
+//! worker hands over plain [`Pixels`], and the UI thread uploads each one to
+//! the renderer exactly once, keeping only the [`Thumbnail`] handle — so the
+//! store holds ids, not megabytes.
 //!
 //! ## The picker's lifecycle is explicit
 //!
@@ -23,10 +22,11 @@
 //! grid the user may only rarely look at, so neither exists while the
 //! Appearance page is off screen. [`WallpaperState::enter`] and
 //! [`WallpaperState::leave`] are the two verbs — [`crate::app`] calls them when
-//! the page truly arrives and truly departs (not per rebuild, and not per
-//! slide-transition churn). Enter scans the wallpaper directories, asks the
-//! daemon to warm its cache, and starts decoding; leave aborts the decoding,
-//! tells the daemon to drop the cache, and frees every brush on the spot.
+//! the page arrives and departs. Enter scans the wallpaper directories, asks
+//! the daemon to warm its cache, and starts decoding; leave aborts the
+//! decoding, tells the daemon to drop the cache, and hands every thumbnail back
+//! to be released — the renderer frees each once the sliding-out page stops
+//! drawing it.
 //!
 //! ## The daemon may not be there
 //!
@@ -45,15 +45,15 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crownos_ipc::adapter::tokio::AsyncClient;
 use crownos_ipc::Error as IpcError;
-use xilem::core::{MessageProxy, NoElement, View};
-use xilem::masonry::peniko::{ImageAlphaType, ImageData};
-use xilem::tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use xilem::tokio::task::JoinHandle;
-use xilem::tokio::time::{sleep_until, Instant};
-use xilem::view::worker_raw;
-use xilem::{Blob, ImageBrush, ImageFormat, ViewCtx};
+use crownos_ipc::adapter::tokio::AsyncClient;
+use crownui::ext::ImageId;
+use crownui::prelude::{Cx, Signal, Size};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinHandle;
+use tokio::time::{Instant, sleep_until};
+
+use crate::util::worker::{MessageProxy, spawn_worker};
 
 /// How long to wait before knocking on the daemon's socket again.
 ///
@@ -71,8 +71,8 @@ const SET_DURATION: f32 = 1.6;
 /// Sized for the bento grid's feature tile — the widest a thumbnail is ever
 /// drawn — so tiles stay sharp on a hidpi display while a thumbnail costs
 /// ~500 KB of RGBA instead of the tens of megabytes the full wallpaper would.
-/// The cost is transient either way: the grid is emptied when the picker
-/// leaves the screen.
+/// The cost is transient either way: the grid is emptied, and its textures
+/// released, when the picker leaves the screen.
 const THUMBNAIL_EDGE: u32 = 480;
 
 /// Where wallpapers live: the user's own folder, then the system's.
@@ -91,8 +91,8 @@ const SET_OFFLINE: &str =
 /// Everything the Appearance page can ask of this backend.
 ///
 /// `Enter` and `Leave` are not sent by the page itself but by
-/// [`crate::app`]'s navigation, which is the only place that knows the page
-/// truly came and went rather than merely rebuilt.
+/// [`crate::app`]'s navigation, which is the one place that knows when the
+/// page comes and goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WallpaperCommand {
     /// The picker is on screen: scan, warm the daemon's cache, decode.
@@ -119,7 +119,7 @@ pub enum WallpaperEvent {
         /// The wallpaper it belongs to.
         path: String,
         /// The decoded, downscaled pixels.
-        brush: ImageBrush,
+        pixels: Pixels,
     },
     /// A scanned file turned out not to decode, so it must not be offered.
     Unreadable {
@@ -138,13 +138,38 @@ pub enum WallpaperEvent {
 
 // --- MARK: State ---
 
+/// Decoded straight-alpha RGBA8, on its way to the renderer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pixels {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// A thumbnail living on the GPU: what a tile draws.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Thumbnail {
+    pub image: ImageId,
+    pub size: Size,
+}
+
+impl Thumbnail {
+    /// Hands `pixels` to the renderer; the caller owns the result and
+    /// releases it.
+    fn upload(cx: &mut Cx, pixels: Pixels) -> Self {
+        let size = Size::new(pixels.width as f32, pixels.height as f32);
+        let image = cx.register_image(pixels.width, pixels.height, pixels.rgba);
+        Self { image, size }
+    }
+}
+
 /// One wallpaper the picker offers: its path, and its thumbnail once decoded.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WallpaperEntry {
     /// Absolute path of the image file.
     pub path: String,
-    /// The grid-sized pixels, or `None` while the decoder hasn't reached it.
-    pub thumbnail: Option<ImageBrush>,
+    /// The uploaded thumbnail, or `None` while the decoder hasn't reached it.
+    pub thumbnail: Option<Thumbnail>,
 }
 
 /// The wallpaper half of the app's [`Store`](crate::state::Store).
@@ -161,7 +186,7 @@ pub struct WallpaperState {
     /// looking at.
     open: bool,
     /// The wallpapers on offer, in display order. Emptied on leave, which is
-    /// where the thumbnail memory actually goes away.
+    /// where the thumbnail textures are handed back.
     pub entries: Vec<WallpaperEntry>,
     /// Whether a scan has completed since the picker opened — what separates
     /// "still looking" from "looked, and there are none".
@@ -207,17 +232,18 @@ impl WallpaperState {
 
     /// The picker is gone: stop paying for thumbnails.
     ///
-    /// The entries are dropped *here*, on the main thread, rather than waiting
-    /// for the worker's round trip — the brushes are the memory, and the whole
-    /// point of leave is to give it back now.
-    pub fn leave(&mut self) {
+    /// Returns every uploaded thumbnail for the caller to release *now*,
+    /// rather than after the worker's round trip — the textures are the
+    /// memory, and the whole point of leave is to give it back.
+    #[must_use]
+    pub fn leave(&mut self) -> Vec<ImageId> {
         if !self.open {
-            return;
+            return Vec::new();
         }
         self.open = false;
         self.scanned = false;
-        self.entries = Vec::new();
         self.send(WallpaperCommand::Leave);
+        uploaded(std::mem::take(&mut self.entries))
     }
 
     /// Clear the last error, for the page's dismiss affordance.
@@ -237,72 +263,120 @@ impl WallpaperState {
         }
     }
 
-    /// Fold one event into the state, on the main thread.
-    fn apply(&mut self, event: WallpaperEvent) {
+    /// The uploaded thumbnail of `path`, once it has one.
+    pub fn thumbnail_of(&self, path: &str) -> Option<Thumbnail> {
+        self.entries
+            .iter()
+            .find(|entry| entry.path == path)
+            .and_then(|entry| entry.thumbnail)
+    }
+
+    /// Whether a thumbnail decoded for `path` would be drawn.
+    ///
+    /// Looked up by path rather than index: entries may already have shrunk
+    /// (an Unreadable) or vanished (a leave) since the decode was queued — and
+    /// a thumbnail nobody will draw is never uploaded.
+    fn awaits_thumbnail(&self, path: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.path == path && entry.thumbnail.is_none())
+    }
+
+    /// Give `path`'s entry its uploaded thumbnail. Returns the thumbnail's
+    /// image when no entry wants it any more, for the caller to release.
+    fn attach_thumbnail(&mut self, path: &str, thumbnail: Thumbnail) -> Option<ImageId> {
+        match self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.path == path && entry.thumbnail.is_none())
+        {
+            Some(entry) => {
+                entry.thumbnail = Some(thumbnail);
+                None
+            }
+            None => Some(thumbnail.image),
+        }
+    }
+
+    /// Fold one event into the state, on the main thread. Returns the images
+    /// it stopped drawing, for the caller to release; thumbnails go through
+    /// [`attach_thumbnail`](Self::attach_thumbnail) instead.
+    fn apply(&mut self, event: WallpaperEvent) -> Vec<ImageId> {
         match event {
             WallpaperEvent::Found(paths) => {
                 // A scan that finished after leave() describes a grid that no
                 // longer exists.
                 if !self.open {
-                    return;
+                    return Vec::new();
                 }
                 self.scanned = true;
-                self.entries = paths
+                let entries = paths
                     .into_iter()
                     .map(|path| WallpaperEntry {
                         path,
                         thumbnail: None,
                     })
                     .collect();
+                return uploaded(std::mem::replace(&mut self.entries, entries));
             }
-            WallpaperEvent::Thumbnail { path, brush } => {
-                // Looked up by path rather than index: entries may already
-                // have shrunk (an Unreadable) or vanished (a leave) since the
-                // decode was queued.
-                if let Some(entry) = self.entries.iter_mut().find(|entry| entry.path == path) {
-                    entry.thumbnail = Some(brush);
-                }
-            }
+            WallpaperEvent::Thumbnail { .. } => {}
             WallpaperEvent::Unreadable { path } => {
-                self.entries.retain(|entry| entry.path != path);
+                let (gone, kept) = std::mem::take(&mut self.entries)
+                    .into_iter()
+                    .partition(|entry| entry.path == path);
+                self.entries = kept;
+                return uploaded(gone);
             }
             WallpaperEvent::Current(path) => self.current = Some(path),
             WallpaperEvent::Online => self.online = true,
             WallpaperEvent::Offline => self.online = false,
             WallpaperEvent::Error(message) => self.error = Some(message),
         }
+        Vec::new()
     }
 }
 
-// --- MARK: The worker view ---
+/// The thumbnails `entries` had uploaded.
+fn uploaded(entries: Vec<WallpaperEntry>) -> Vec<ImageId> {
+    entries
+        .into_iter()
+        .filter_map(|entry| entry.thumbnail.map(|thumbnail| thumbnail.image))
+        .collect()
+}
 
-/// The wallpaper backend, as an element-less view.
+// --- MARK: The worker ---
+
+/// Starts the wallpaper backend for as long as the calling component lives —
+/// the window, not the Appearance page: the expensive state follows
+/// [`WallpaperCommand::Enter`]/`Leave` instead.
 ///
-/// Rides in the alongside slot of [`fork`](xilem::core::fork) next to
-/// [`wifi_worker`](crate::net::wifi::wifi_worker), and lives exactly as long
-/// as the window — deliberately *not* as long as the Appearance page, whose
-/// slide-transition lifetime is torn down and rebuilt on every navigation.
-/// The expensive state follows [`WallpaperCommand::Enter`]/`Leave` instead.
-///
-/// Two projections for the same reason as the Wi-Fi worker's: `wallpaper`
-/// reaches the runtime state this module owns, `on_event` is the caller's
-/// chance to mirror the daemon's word into `appearance.ron`.
-pub fn wallpaper_worker<State, F>(
-    wallpaper: fn(&mut State) -> &mut WallpaperState,
-    on_event: F,
-) -> impl View<State, (), ViewCtx, Element = NoElement> + Send + Sync
-where
-    State: 'static,
-    F: Fn(&mut State, &WallpaperEvent) + Send + Sync + 'static,
-{
-    worker_raw(
-        run,
-        move |state: &mut State, sender| wallpaper(state).attach(sender),
-        move |state: &mut State, event: WallpaperEvent| {
-            on_event(state, &event);
-            wallpaper(state).apply(event);
-        },
-    )
+/// `on_event` sees every event first: the caller's chance to mirror the
+/// daemon's word into `appearance.ron`.
+pub fn wallpaper_worker(
+    cx: &mut Cx,
+    wallpaper: Signal<WallpaperState>,
+    mut on_event: impl FnMut(&mut Cx, &WallpaperEvent) + 'static,
+) {
+    let sender = spawn_worker(cx, run, move |cx, event| {
+        on_event(cx, &event);
+        let mut released = Vec::new();
+        match event {
+            WallpaperEvent::Thumbnail { path, pixels } => {
+                if !wallpaper.with_untracked(cx, |state| state.awaits_thumbnail(&path)) {
+                    return;
+                }
+                let thumbnail = Thumbnail::upload(cx, pixels);
+                wallpaper.update(cx, |state| {
+                    released.extend(state.attach_thumbnail(&path, thumbnail));
+                });
+            }
+            event => wallpaper.update(cx, |state| released = state.apply(event)),
+        }
+        for image in released {
+            cx.release_image(image);
+        }
+    });
+    wallpaper.update(cx, |state| state.attach(sender));
 }
 
 // --- MARK: The worker future ---
@@ -342,11 +416,11 @@ async fn run(
         daemon.reconnect_when_due(&proxy, &warm).await;
 
         let wake = match daemon.client.as_mut() {
-            Some(client) => xilem::tokio::select! {
+            Some(client) => tokio::select! {
                 command = commands.recv() => Wake::Command(command),
                 changed = client.next_event::<crownpaper::Changed>() => Wake::Changed(changed),
             },
-            None => xilem::tokio::select! {
+            None => tokio::select! {
                 command = commands.recv() => Wake::Command(command),
                 () = wait_until(daemon.retry_at) => Wake::Retry,
             },
@@ -367,16 +441,14 @@ async fn run(
                 return;
             }
             Wake::Command(Some(WallpaperCommand::Enter)) => {
-                let found = xilem::tokio::task::spawn_blocking(scan)
-                    .await
-                    .unwrap_or_default();
+                let found = tokio::task::spawn_blocking(scan).await.unwrap_or_default();
                 let _ = proxy.message(WallpaperEvent::Found(found.clone()));
                 warm = found;
                 daemon.preload(&proxy, &warm).await;
                 if let Some(previous) = decode.take() {
                     previous.abort();
                 }
-                decode = Some(xilem::tokio::spawn(decode_all(warm.clone(), proxy.clone())));
+                decode = Some(tokio::spawn(decode_all(warm.clone(), proxy.clone())));
             }
             Wake::Command(Some(WallpaperCommand::Leave)) => {
                 if let Some(task) = decode.take() {
@@ -623,9 +695,9 @@ fn is_wallpaper(path: &Path) -> bool {
 async fn decode_all(paths: Vec<String>, proxy: MessageProxy<WallpaperEvent>) {
     for path in paths {
         let file = path.clone();
-        let decoded = xilem::tokio::task::spawn_blocking(move || thumbnail(Path::new(&file))).await;
+        let decoded = tokio::task::spawn_blocking(move || thumbnail(Path::new(&file))).await;
         let event = match decoded {
-            Ok(Some(brush)) => WallpaperEvent::Thumbnail { path, brush },
+            Ok(Some(pixels)) => WallpaperEvent::Thumbnail { path, pixels },
             // Decode failed (or the decoder panicked on a malformed file):
             // either way this file must not be offered as a wallpaper.
             _ => WallpaperEvent::Unreadable { path },
@@ -637,7 +709,7 @@ async fn decode_all(paths: Vec<String>, proxy: MessageProxy<WallpaperEvent>) {
 }
 
 /// One file's grid-sized pixels, or `None` for anything undecodable.
-fn thumbnail(path: &Path) -> Option<ImageBrush> {
+fn thumbnail(path: &Path) -> Option<Pixels> {
     let decoded = image::ImageReader::open(path).ok()?.decode().ok()?;
     // `thumbnail` fits within the box preserving aspect ratio, and uses a
     // fast integer path for the large downscales wallpapers always are.
@@ -645,29 +717,24 @@ fn thumbnail(path: &Path) -> Option<ImageBrush> {
         .thumbnail(THUMBNAIL_EDGE, THUMBNAIL_EDGE)
         .into_rgba8();
     let (width, height) = scaled.dimensions();
-    Some(ImageBrush::new(ImageData {
-        data: Blob::from(scaled.into_raw()),
-        format: ImageFormat::Rgba8,
-        alpha_type: ImageAlphaType::Alpha,
+    Some(Pixels {
         width,
         height,
-    }))
+        rgba: scaled.into_raw(),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xilem::tokio::sync::mpsc::unbounded_channel;
+    use tokio::sync::mpsc::unbounded_channel;
 
-    /// A 1×1 brush, for events that need one.
-    fn brush() -> ImageBrush {
-        ImageBrush::new(ImageData {
-            data: Blob::from(vec![0_u8; 4]),
-            format: ImageFormat::Rgba8,
-            alpha_type: ImageAlphaType::Alpha,
-            width: 1,
-            height: 1,
-        })
+    /// An uploaded 1×1 thumbnail, for events that need one.
+    fn thumbnail(id: u64) -> Thumbnail {
+        Thumbnail {
+            image: ImageId(id),
+            size: Size::new(1.0, 1.0),
+        }
     }
 
     // --- MARK: Scanning ---
@@ -703,28 +770,28 @@ mod tests {
             "a second enter is not a rescan"
         );
 
-        state.apply(WallpaperEvent::Found(vec![
+        let _ = state.apply(WallpaperEvent::Found(vec![
             "/w/a.png".into(),
             "/w/b.png".into(),
         ]));
         assert!(state.scanned);
         assert_eq!(state.entries.len(), 2);
 
-        state.apply(WallpaperEvent::Thumbnail {
-            path: "/w/b.png".into(),
-            brush: brush(),
-        });
+        assert!(state.awaits_thumbnail("/w/b.png"));
+        assert_eq!(state.attach_thumbnail("/w/b.png", thumbnail(7)), None);
         assert!(state.entries[1].thumbnail.is_some());
         assert!(state.entries[0].thumbnail.is_none());
+        assert!(!state.awaits_thumbnail("/w/b.png"), "one upload per entry");
 
-        state.leave();
-        assert_eq!(receiver.try_recv().ok(), Some(WallpaperCommand::Leave));
-        assert!(
-            state.entries.is_empty(),
+        assert_eq!(
+            state.leave(),
+            vec![ImageId(7)],
             "leaving is when the memory goes back"
         );
+        assert_eq!(receiver.try_recv().ok(), Some(WallpaperCommand::Leave));
+        assert!(state.entries.is_empty());
         assert!(!state.scanned);
-        state.leave();
+        assert!(state.leave().is_empty());
         assert!(
             receiver.try_recv().is_err(),
             "a second leave has nothing to release"
@@ -735,9 +802,9 @@ mod tests {
     fn a_scan_finishing_after_leave_changes_nothing() {
         let mut state = WallpaperState::default();
         state.enter();
-        state.leave();
+        let _ = state.leave();
 
-        state.apply(WallpaperEvent::Found(vec!["/w/late.png".into()]));
+        let _ = state.apply(WallpaperEvent::Found(vec!["/w/late.png".into()]));
         assert!(
             state.entries.is_empty() && !state.scanned,
             "the grid it describes no longer exists"
@@ -748,14 +815,18 @@ mod tests {
     fn an_unreadable_file_is_withdrawn_from_the_grid() {
         let mut state = WallpaperState::default();
         state.enter();
-        state.apply(WallpaperEvent::Found(vec![
+        let _ = state.apply(WallpaperEvent::Found(vec![
             "/w/ok.png".into(),
             "/w/bad.png".into(),
         ]));
+        assert_eq!(state.attach_thumbnail("/w/bad.png", thumbnail(3)), None);
 
-        state.apply(WallpaperEvent::Unreadable {
-            path: "/w/bad.png".into(),
-        });
+        assert_eq!(
+            state.apply(WallpaperEvent::Unreadable {
+                path: "/w/bad.png".into(),
+            }),
+            vec![ImageId(3)]
+        );
         assert_eq!(state.entries.len(), 1);
         assert_eq!(state.entries[0].path, "/w/ok.png");
     }
@@ -781,17 +852,17 @@ mod tests {
         let mut state = WallpaperState::default();
         assert!(!state.online, "honest before the first connect");
 
-        state.apply(WallpaperEvent::Online);
+        let _ = state.apply(WallpaperEvent::Online);
         assert!(state.online);
-        state.apply(WallpaperEvent::Current("/w/dunes.png".into()));
+        let _ = state.apply(WallpaperEvent::Current("/w/dunes.png".into()));
         assert_eq!(state.current.as_deref(), Some("/w/dunes.png"));
 
-        state.apply(WallpaperEvent::Error("no such file".into()));
+        let _ = state.apply(WallpaperEvent::Error("no such file".into()));
         assert_eq!(state.error.as_deref(), Some("no such file"));
         state.dismiss_error();
         assert!(state.error.is_none());
 
-        state.apply(WallpaperEvent::Offline);
+        let _ = state.apply(WallpaperEvent::Offline);
         assert!(!state.online);
     }
 
@@ -811,5 +882,17 @@ mod tests {
         );
         // And a second send must still not panic.
         state.send(WallpaperCommand::Leave);
+    }
+
+    #[test]
+    fn a_thumbnail_nobody_wants_is_handed_back() {
+        let mut state = WallpaperState::default();
+        state.enter();
+        assert!(!state.awaits_thumbnail("/w/gone.png"));
+        assert_eq!(
+            state.attach_thumbnail("/w/gone.png", thumbnail(9)),
+            Some(ImageId(9)),
+            "a decode that lost its entry must not leak its texture"
+        );
     }
 }

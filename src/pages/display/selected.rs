@@ -7,12 +7,15 @@
 //! nothing highlighted is how a user finds out their monitor is on a setting
 //! the page cannot name, and then cannot get back to it.
 
-use crownuikit::widgets::{select, toggle};
-use xilem::WidgetView;
+use crownui::kit::{select, toggle};
+use crownui::prelude::{Cx, IntoProp, Runtime, Semantic, Signal, View, bind, vstack};
 
-use crate::layout::{setting_row, setting_row_desc, settings_card_titled, settings_divider};
-use crate::net::outputs::{MonitorDraft, Transform};
+use crate::layout::{
+    optional, setting_row, setting_row_desc, settings_card_titled, settings_divider, when,
+};
+use crate::net::outputs::{MonitorDraft, OutputState, Transform};
 use crate::state::Store;
+use crate::util::bridge::{bridge, derived};
 
 /// The scales offered. Quarter steps are what users recognise, and every one
 /// is exactly representable in `wp_fractional_scale_v1`'s 120ths.
@@ -21,103 +24,179 @@ const SCALES: [f64; 9] = [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0];
 /// How close two scales have to be to count as the same one.
 const SCALE_EPSILON: f64 = 0.001;
 
-pub fn card(store: &Store) -> Option<impl WidgetView<Store> + use<>> {
-    let outputs = &store.outputs;
+/// What the card is built from; anything finer is bound.
+#[derive(Debug, Clone, PartialEq)]
+struct Selection {
+    name: String,
+    title: String,
+    modes: Vec<String>,
+    vrr_capable: bool,
+}
+
+fn selection(outputs: &OutputState) -> Option<Selection> {
     let name = outputs.selected.clone()?;
     let monitor = outputs.monitor(&name)?;
-    let draft = outputs.draft(&name)?;
+    outputs.draft(&name)?;
+    Some(Selection {
+        title: monitor.title(),
+        modes: monitor.modes.iter().map(|mode| mode.label()).collect(),
+        vrr_capable: monitor.vrr_capable,
+        name,
+    })
+}
 
-    Some(settings_card_titled(
-        monitor.title(),
-        (
-            resolution_row(&name, monitor.modes.iter().map(|mode| mode.label()).collect(), draft),
-            settings_divider(),
-            scale_row(&name, draft),
-            settings_divider(),
-            orientation_row(&name, draft),
-            monitor.vrr_capable.then(|| {
-                (settings_divider(), adaptive_sync_row(&name, draft))
-            }),
-        ),
-    ))
+pub fn card(store: Store) -> impl View {
+    let outputs = store.outputs;
+    optional(
+        move |runtime| outputs.with(runtime, selection),
+        move |cx, selected| {
+            let Selection {
+                name,
+                title,
+                modes,
+                vrr_capable,
+            } = selected;
+            let draft = Draft { outputs, name };
+            settings_card_titled(
+                &title,
+                (
+                    setting_row("Resolution", resolution(cx, draft.clone(), modes)),
+                    settings_divider(),
+                    setting_row("Scale", scale(cx, draft.clone())),
+                    settings_divider(),
+                    setting_row("Orientation", orientation(cx, draft.clone())),
+                    when(
+                        move |_| vrr_capable,
+                        move |cx| {
+                            vstack((settings_divider(), adaptive_sync_row(cx, draft.clone())))
+                        },
+                    ),
+                ),
+            )
+        },
+    )
+}
+
+/// One monitor's draft, as the rows read and edit it.
+#[derive(Clone)]
+struct Draft {
+    outputs: Signal<OutputState>,
+    name: String,
+}
+
+impl Draft {
+    fn read<R: Default>(&self, runtime: &mut Runtime, read: impl FnOnce(&MonitorDraft) -> R) -> R {
+        self.outputs
+            .with(runtime, |outputs| outputs.draft(&self.name).map(read))
+            .unwrap_or_default()
+    }
+
+    fn edit(&self, runtime: &mut Runtime, edit: impl FnOnce(&mut MonitorDraft)) {
+        self.outputs
+            .update(runtime, |outputs| outputs.edit(&self.name, edit));
+    }
+
+    /// Bound to "this monitor is switched off in the draft".
+    fn off(&self) -> impl IntoProp<bool> + use<> {
+        let draft = self.clone();
+        bind(move |runtime| !draft.read(runtime, |draft| draft.enabled))
+    }
 }
 
 /// The mode list is per monitor, so its labels cannot be a static table the
 /// way a schema enum's are.
-fn resolution_row(
-    name: &str,
-    modes: Vec<String>,
-    draft: &MonitorDraft,
-) -> impl WidgetView<Store> + use<> {
-    let name = name.to_owned();
-
-    setting_row(
-        "Resolution",
-        select(modes, draft.mode, move |store: &mut Store, index| {
-            store.outputs.edit(&name, |draft| draft.mode = Some(index));
-        })
-        .disabled(!draft.enabled),
-    )
+fn resolution(cx: &mut Cx, draft: Draft, modes: Vec<String>) -> impl View + use<> {
+    let labels = cx.signal(modes);
+    let (reading, editing) = (draft.clone(), draft.clone());
+    let selected = bridge(
+        cx,
+        move |runtime| reading.read(runtime, |draft| draft.mode),
+        move |runtime, index| {
+            if index.is_some() {
+                editing.edit(runtime, |draft| draft.mode = index);
+            }
+        },
+    );
+    select(labels, selected).disabled(draft.off())
 }
 
-fn scale_row(name: &str, draft: &MonitorDraft) -> impl WidgetView<Store> + use<> {
-    let name = name.to_owned();
-    let scales = scales(draft.scale);
-    let selected = scales
-        .iter()
-        .position(|value| (value - draft.scale).abs() < SCALE_EPSILON);
-    let labels: Vec<String> = scales.iter().map(|value| format!("{:.0}%", value * 100.0)).collect();
-
-    setting_row(
-        "Scale",
-        select(labels, selected, move |store: &mut Store, index| {
-            let Some(value) = scales.get(index).copied() else {
-                return;
-            };
-            store.outputs.edit(&name, |draft| draft.scale = value);
-        })
-        .disabled(!draft.enabled),
-    )
+fn scale(cx: &mut Cx, draft: Draft) -> impl View + use<> {
+    let (listing, reading, editing) = (draft.clone(), draft.clone(), draft.clone());
+    let labels = derived(cx, move |runtime| {
+        scales(listing.read(runtime, |draft| draft.scale))
+            .iter()
+            .map(|value| format!("{:.0}%", value * 100.0))
+            .collect::<Vec<_>>()
+    });
+    let selected = bridge(
+        cx,
+        move |runtime| {
+            let current = reading.read(runtime, |draft| draft.scale);
+            scales(current)
+                .iter()
+                .position(|value| (value - current).abs() < SCALE_EPSILON)
+        },
+        move |runtime, index: Option<usize>| {
+            let current = editing.read(runtime, |draft| draft.scale);
+            if let Some(value) = index.and_then(|index| scales(current).get(index).copied()) {
+                editing.edit(runtime, |draft| draft.scale = value);
+            }
+        },
+    );
+    select(labels, selected).disabled(draft.off())
 }
 
-fn orientation_row(name: &str, draft: &MonitorDraft) -> impl WidgetView<Store> + use<> {
-    let name = name.to_owned();
-    let choices = orientations(draft.transform);
-    let selected = choices.iter().position(|choice| *choice == draft.transform);
-    let labels: Vec<&'static str> = choices.iter().map(|choice| choice.label()).collect();
-
-    setting_row(
-        "Orientation",
-        select(labels, selected, move |store: &mut Store, index| {
-            let Some(choice) = choices.get(index).copied() else {
-                return;
-            };
-            store.outputs.edit(&name, |draft| draft.transform = choice);
-        })
-        .disabled(!draft.enabled),
-    )
+fn orientation(cx: &mut Cx, draft: Draft) -> impl View + use<> {
+    let (listing, reading, editing) = (draft.clone(), draft.clone(), draft.clone());
+    let labels = derived(cx, move |runtime| {
+        orientations(listing.read(runtime, |draft| draft.transform))
+            .iter()
+            .map(|choice| choice.label().to_owned())
+            .collect::<Vec<_>>()
+    });
+    let selected = bridge(
+        cx,
+        move |runtime| {
+            let current = reading.read(runtime, |draft| draft.transform);
+            orientations(current)
+                .iter()
+                .position(|choice| *choice == current)
+        },
+        move |runtime, index: Option<usize>| {
+            let current = editing.read(runtime, |draft| draft.transform);
+            if let Some(choice) = index.and_then(|index| orientations(current).get(index).copied())
+            {
+                editing.edit(runtime, |draft| draft.transform = choice);
+            }
+        },
+    );
+    select(labels, selected).disabled(draft.off())
 }
 
 /// Only offered for a monitor the compositor said something about adaptive
 /// sync for — the protocol has no capability event, so its silence is how a
 /// connector that cannot do it says so.
-fn adaptive_sync_row(name: &str, draft: &MonitorDraft) -> impl WidgetView<Store> + use<> {
-    let name = name.to_owned();
-
+fn adaptive_sync_row(cx: &mut Cx, draft: Draft) -> impl View + use<> {
+    let (reading, editing) = (draft.clone(), draft.clone());
+    let on = bridge(
+        cx,
+        move |runtime| reading.read(runtime, |draft| draft.adaptive_sync),
+        move |runtime, on| editing.edit(runtime, |draft| draft.adaptive_sync = on),
+    );
     setting_row_desc(
         "Adaptive sync",
         "Match the refresh rate to what is being drawn",
-        toggle("", draft.adaptive_sync, move |store: &mut Store, on| {
-            store.outputs.edit(&name, |draft| draft.adaptive_sync = on);
-        })
-        .disabled(!draft.enabled),
+        toggle(on).disabled(draft.off()),
     )
 }
 
 /// [`SCALES`], plus whatever the monitor is on when that is not one of them.
 fn scales(current: f64) -> Vec<f64> {
     let mut scales = SCALES.to_vec();
-    if !scales.iter().any(|value| (value - current).abs() < SCALE_EPSILON) {
+    if !scales
+        .iter()
+        .any(|value| (value - current).abs() < SCALE_EPSILON)
+    {
         scales.push(current);
         scales.sort_by(f64::total_cmp);
     }

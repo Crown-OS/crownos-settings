@@ -5,10 +5,10 @@ use std::time::Duration;
 use crownconnect_linux::ipc::proto::{self, DeviceId, DeviceInfo, Event};
 use crownos_ipc::adapter::tokio::AsyncClient;
 use crownos_ipc::{Client, Error as IpcError, EventMsg, MethodMsg};
-use xilem::core::MessageProxy;
-use xilem::tokio::time::Instant;
+use tokio::time::Instant;
 
 use super::CrossDeviceEvent;
+use crate::util::worker::MessageProxy;
 
 /// The first retry delay; each failure doubles it up to [`LONGEST_RETRY`].
 const FIRST_RETRY: Duration = Duration::from_secs(1);

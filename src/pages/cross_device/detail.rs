@@ -1,173 +1,238 @@
 //! One paired device: what it is, what it may do, and forgetting it.
 
-use blinc_icons::icons;
-use crownuikit::config::theme;
-use crownuikit::widgets::{ButtonVariant, Tone, badge, button, select, status, toggle};
-use xilem::WidgetView;
-use xilem::view::FlexSpacer;
+use crownui::kit::{
+    ButtonOptions, ButtonVariant, StatusOptions, Tone, badge, icons, select, status, toggle,
+    use_theme,
+};
+use crownui::prelude::{
+    AnyView, Cx, Runtime, Semantic, Signal, Styled, View, bind, component, keyed, spacer, vstack,
+};
 
 use super::describe::{
     EDGES, battery_text, class_name, connection_summary, edge_index, feature_copy,
 };
-use super::parts::inline;
-use crate::controls::value_text;
+use super::parts::{acting, row_button};
 use crate::layout::{
-    setting_row, setting_row_content, setting_row_desc, setting_row_icon_desc, settings_card,
-    settings_card_titled, settings_divider,
+    card_stack, glyph, inline, nothing, setting_row, setting_row_content, setting_row_desc,
+    setting_row_icon_desc, settings_card, settings_card_titled, settings_divider, spread,
+    value_text, when,
 };
-use crate::net::crownconnect::{CrossDeviceState, Device, Feature};
-use crate::pages::PageView;
-use crate::state::Store;
+use crate::net::crownconnect::{CrossDeviceState, Device, DeviceId, Feature};
+use crate::util::bridge::bridge;
+use crate::util::theme::tint;
 
-pub fn cards(state: &CrossDeviceState, device: &Device) -> Vec<PageView> {
-    let mut cards = vec![
-        back_button().boxed(),
-        summary_card(device).boxed(),
-        features_card(device).boxed(),
-    ];
-    if let Some(controls) = controls_card(device) {
-        cards.push(controls);
-    }
-    cards.push(forget_card(device, state.confirming_forget).boxed());
-    cards
+/// Reads the open device, or `R`'s default once it has gone.
+fn device<R: Default>(
+    runtime: &mut Runtime,
+    state: Signal<CrossDeviceState>,
+    id: DeviceId,
+    read: impl FnOnce(&Device) -> R,
+) -> R {
+    state
+        .with(runtime, |state| state.device(id).map(read))
+        .unwrap_or_default()
 }
 
-fn back_button() -> impl WidgetView<Store> {
-    button("All Devices", |store: &mut Store| {
-        store.cross_device.close()
-    })
-    .variant(ButtonVariant::Ghost)
-    .small()
-    .leading_icon(icons::CHEVRON_LEFT)
-}
-
-fn summary_card(device: &Device) -> impl WidgetView<Store> + use<> {
-    let info = &device.info;
-    let battery = info.battery.map(|battery| {
-        (
-            settings_divider(),
-            setting_row("Battery", value_text(battery_text(battery))),
+pub fn cards(cx: &mut Cx, state: Signal<CrossDeviceState>, id: DeviceId, name: String) -> AnyView {
+    card_stack((
+        acting(
+            row_button("All Devices", ButtonVariant::Ghost).leading_icon(icons::CHEVRON_LEFT),
+            state,
+            CrossDeviceState::close,
         )
-    });
+        .self_start(),
+        summary_card(state, id, &name),
+        features_card(cx, state, id),
+        controls_card(state, id),
+        forget_card(state, id, name),
+    ))
+    .boxed()
+}
+
+fn summary_card(state: Signal<CrossDeviceState>, id: DeviceId, name: &str) -> impl View + use<> {
+    let fact = move |read: fn(&Device) -> String| {
+        value_text(bind(move |runtime| device(runtime, state, id, read)))
+    };
     settings_card_titled(
-        info.name.clone(),
+        name,
         (
-            setting_row("Status", value_text(connection_summary(info))),
+            setting_row(
+                "Status",
+                fact(|device| connection_summary(&device.info).to_owned()),
+            ),
             settings_divider(),
-            setting_row("Type", value_text(class_name(info.class))),
-            battery,
+            setting_row(
+                "Type",
+                fact(|device| class_name(device.info.class).to_owned()),
+            ),
+            when(
+                move |runtime| device(runtime, state, id, |device| device.info.battery.is_some()),
+                move |_| {
+                    vstack((
+                        settings_divider(),
+                        setting_row(
+                            "Battery",
+                            fact(|device| {
+                                device.info.battery.map(battery_text).unwrap_or_default()
+                            }),
+                        ),
+                    ))
+                },
+            ),
         ),
     )
 }
 
-fn features_card(device: &Device) -> impl WidgetView<Store> + use<> {
-    let mut rows: Vec<PageView> = Vec::with_capacity(Feature::ALL.len() * 2);
-    for feature in Feature::ALL {
-        if !rows.is_empty() {
-            rows.push(settings_divider().boxed());
-        }
-        rows.push(feature_row(device, feature));
-    }
+fn features_card(cx: &mut Cx, state: Signal<CrossDeviceState>, id: DeviceId) -> impl View + use<> {
+    let rows: Vec<_> = Feature::ALL
+        .into_iter()
+        .enumerate()
+        .map(|(index, feature)| {
+            let hairline = if index == 0 {
+                nothing().boxed()
+            } else {
+                settings_divider().boxed()
+            };
+            vstack((hairline, feature_row(cx, state, id, feature)))
+        })
+        .collect();
     settings_card_titled("Features", rows)
 }
 
-fn feature_row(device: &Device, feature: Feature) -> PageView {
+fn feature_row(
+    cx: &mut Cx,
+    state: Signal<CrossDeviceState>,
+    id: DeviceId,
+    feature: Feature,
+) -> impl View + use<> {
     let copy = feature_copy(feature);
-    let id = device.info.id;
-    let allowed = device.info.features.contains(feature);
-    let running = device
-        .info
-        .active
-        .contains(feature)
-        .then(|| badge("In use", theme().status.success));
-    let switch = toggle("", allowed, move |store: &mut Store, enabled| {
-        store.cross_device.set_feature(id, feature, enabled);
-    });
+    let allowed = bridge(
+        cx,
+        move |runtime| {
+            device(runtime, state, id, |device| {
+                device.info.features.contains(feature)
+            })
+        },
+        move |runtime, enabled| {
+            state.update(runtime, |state| state.set_feature(id, feature, enabled))
+        },
+    );
+    let running = when(
+        move |runtime| {
+            device(runtime, state, id, |device| {
+                device.info.active.contains(feature)
+            })
+        },
+        |_| {
+            component(|cx| {
+                let theme = use_theme(cx);
+                badge("In use", tint(theme, |theme| theme.status.success))
+            })
+        },
+    );
     setting_row_icon_desc(
-        copy.glyph,
+        glyph(copy.glyph),
         copy.title,
         copy.description,
-        inline((running, switch)),
+        inline((running, toggle(allowed))),
     )
-    .boxed()
 }
 
 /// The controls a feature unlocks, when any of them is allowed.
-fn controls_card(device: &Device) -> Option<PageView> {
-    let info = &device.info;
-    let id = info.id;
-    let offline = !info.connected;
-
-    let hotspot = info.features.contains(Feature::Hotspot).then(|| {
-        setting_row_desc(
-            "Mobile hotspot",
-            "Share the device's mobile data with this computer",
-            toggle(
-                "",
-                device.hotspot.unwrap_or(false),
-                move |store: &mut Store, enabled| {
-                    store.cross_device.set_hotspot(id, enabled);
-                },
-            )
-            .disabled(offline),
-        )
-        .boxed()
-    });
-    let edge = info.features.contains(Feature::Unicursor).then(|| {
-        setting_row_desc(
-            "Shared cursor edge",
-            "Push the pointer past this side of the screen to reach the device",
-            select(
-                EDGES.map(|(name, _)| name),
-                device.unicursor_edge.and_then(edge_index),
-                move |store: &mut Store, index| {
-                    if let Some(&(_, edge)) = EDGES.get(index) {
-                        store.cross_device.set_unicursor_edge(id, edge);
-                    }
-                },
-            )
-            .disabled(offline),
-        )
-        .boxed()
-    });
-
-    let rows: Vec<PageView> = match (hotspot, edge) {
-        (None, None) => return None,
-        (Some(one), None) | (None, Some(one)) => vec![one],
-        (Some(hotspot), Some(edge)) => vec![hotspot, settings_divider().boxed(), edge],
-    };
-    Some(settings_card_titled("Controls", rows).boxed())
+fn controls_card(state: Signal<CrossDeviceState>, id: DeviceId) -> impl View {
+    keyed(
+        move |runtime| {
+            device(runtime, state, id, |device| {
+                (
+                    device.info.features.contains(Feature::Hotspot),
+                    device.info.features.contains(Feature::Unicursor),
+                )
+            })
+        },
+        move |cx, (hotspot, edge)| {
+            if !hotspot && !edge {
+                return nothing().boxed();
+            }
+            let offline = move || {
+                bind(move |runtime| !device(runtime, state, id, |device| device.info.connected))
+            };
+            let hotspot_row = hotspot.then(|| {
+                let on = bridge(
+                    cx,
+                    move |runtime| {
+                        device(runtime, state, id, |device| device.hotspot.unwrap_or(false))
+                    },
+                    move |runtime, enabled| {
+                        state.update(runtime, |state| state.set_hotspot(id, enabled))
+                    },
+                );
+                setting_row_desc(
+                    "Mobile hotspot",
+                    "Share the device's mobile data with this computer",
+                    toggle(on).disabled(offline()),
+                )
+            });
+            let edge_row = edge.then(|| {
+                let names = cx.signal(EDGES.iter().map(|(name, _)| (*name).to_owned()).collect());
+                let selected = bridge(
+                    cx,
+                    move |runtime| {
+                        device(runtime, state, id, |device| {
+                            device.unicursor_edge.and_then(edge_index)
+                        })
+                    },
+                    move |runtime, index: Option<usize>| {
+                        if let Some(&(_, edge)) = index.and_then(|index| EDGES.get(index)) {
+                            state.update(runtime, |state| state.set_unicursor_edge(id, edge));
+                        }
+                    },
+                );
+                setting_row_desc(
+                    "Shared cursor edge",
+                    "Push the pointer past this side of the screen to reach the device",
+                    select(names, selected).disabled(offline()),
+                )
+            });
+            let between = (hotspot && edge).then(settings_divider);
+            settings_card_titled("Controls", (hotspot_row, between, edge_row)).boxed()
+        },
+    )
 }
 
-fn forget_card(device: &Device, confirming: bool) -> impl WidgetView<Store> + use<> {
-    let id = device.info.id;
-    let row: PageView = if confirming {
-        setting_row_content(inline((
-            status(format!("Forget {}?", device.info.name)).tone(Tone::Danger),
-            FlexSpacer::Flex(1.0),
-            button("Cancel", |store: &mut Store| {
-                store.cross_device.ask_forget(false);
-            })
-            .variant(ButtonVariant::Ghost)
-            .small(),
-            button("Forget", move |store: &mut Store| {
-                store.cross_device.forget(id);
-            })
-            .variant(ButtonVariant::Destructive)
-            .small(),
-        )))
-        .boxed()
-    } else {
-        setting_row_desc(
-            "Forget this device",
-            "Deletes its keys; it has to pair again to reconnect",
-            button("Forget…", |store: &mut Store| {
-                store.cross_device.ask_forget(true);
-            })
-            .variant(ButtonVariant::Destructive)
-            .small(),
-        )
-        .boxed()
-    };
-    settings_card((row,))
+fn forget_card(state: Signal<CrossDeviceState>, id: DeviceId, name: String) -> impl View {
+    keyed(
+        move |runtime| state.with(runtime, |state| state.confirming_forget),
+        move |_, confirming| {
+            if confirming {
+                settings_card((setting_row_content(spread((
+                    status(format!("Forget {name}?")).tone(Tone::Danger),
+                    spacer(),
+                    acting(row_button("Cancel", ButtonVariant::Ghost), state, |state| {
+                        state.ask_forget(false);
+                    }),
+                    acting(
+                        row_button("Forget", ButtonVariant::Destructive),
+                        state,
+                        move |state| {
+                            state.forget(id);
+                        },
+                    ),
+                ))),))
+                .boxed()
+            } else {
+                settings_card((setting_row_desc(
+                    "Forget this device",
+                    "Deletes its keys; it has to pair again to reconnect",
+                    acting(
+                        row_button("Forget…", ButtonVariant::Destructive),
+                        state,
+                        |state| {
+                            state.ask_forget(true);
+                        },
+                    ),
+                ),))
+                .boxed()
+            }
+        },
+    )
 }

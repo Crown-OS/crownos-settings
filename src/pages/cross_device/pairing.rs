@@ -1,217 +1,314 @@
 //! The pairing flow: a QR invitation, a code to compare, and the outcome.
 
-use blinc_icons::icons;
-use crownuikit::config::theme;
-use crownuikit::util::INTER;
-use crownuikit::widgets::{ButtonVariant, Tone, button, callout, spinner, status};
-use xilem::masonry::properties::ObjectFit;
-use xilem::masonry::properties::types::AsUnit;
-use xilem::style::Style;
-use xilem::view::{
-    CrossAxisAlignment, FlexExt, FlexSpacer, flex_col, flex_row, image, label, sized_box,
+use crownui::kit::{
+    ButtonOptions, ButtonVariant, CalloutOptions, INTER_FAMILY, StatusOptions, Tone, button,
+    callout, icons, spinner, status, use_theme,
 };
-use xilem::{FontWeight, WidgetView};
+use crownui::prelude::{
+    AnyView, BLACK, CornerRadii, Cx, Rect, Signal, Styled, View, WHITE, bind, canvas, component,
+    for_each, hstack, keyed, spacer, text, vstack,
+};
 
 use super::describe::{class_glyph, countdown_text, grouped_code};
-use super::parts::{INLINE_GAP, ROW_SPINNER, headline, inline, paragraph};
-use crate::controls::value_text;
+use super::parts::{ROW_SPINNER, acting, row_button};
 use crate::layout::{
-    separated, setting_row_content, setting_row_icon, settings_card_titled, settings_divider,
+    INLINE_GAP, Listed, card_stack, glyph, hairline_unless_first, headline, inline, listed,
+    nothing, paragraph, setting_row_content, setting_row_icon, settings_card_titled,
+    settings_divider, spread, value_text, when,
 };
-use crate::net::crownconnect::{
-    CrossDeviceState, PairingInvite, PairingOutcome, PairingPrompt, PairingSession,
-};
-use crate::pages::PageView;
-use crate::state::Store;
+use crate::net::crownconnect::{CrossDeviceState, Device, PairingOutcome, PairingSession};
+use crate::util::bridge::derived;
+use crate::util::qr::QrMatrix;
+use crate::util::theme::tint;
 
 const TITLE: &str = "Connect a Device";
 /// The QR code's largest side; it is drawn at the biggest whole number of
 /// pixels per module that fits, so no module is ever resampled unevenly.
-const QR_SIDE: f64 = 196.0;
-const QR_GAP: f64 = 24.0;
+const QR_SIDE: f32 = 196.0;
+const QR_GAP: f32 = 24.0;
 const CODE_SIZE: f32 = 34.0;
 
-pub fn cards(state: &CrossDeviceState, session: &PairingSession) -> Vec<PageView> {
-    if let Some(outcome) = session.outcome.as_ref() {
-        return vec![outcome_view(outcome)];
-    }
-    if let Some(prompt) = session.prompt.as_ref() {
-        return vec![compare_card(prompt).boxed()];
-    }
-    let Some(invite) = session.invite.as_ref() else {
-        return vec![waiting_card().boxed()];
-    };
-    let mut cards = vec![invite_card(invite, state.now_unix_ms).boxed()];
-    if state.nearby().next().is_some() {
-        cards.push(nearby_card(state).boxed());
-    }
-    cards
+/// Where the pairing flow is, as far as the cards' structure goes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stage {
+    Outcome(PairingOutcome),
+    Compare { name: String, code: String },
+    Waiting,
+    Invite { qr: QrMatrix, expired: bool },
 }
 
-fn waiting_card() -> impl WidgetView<Store> {
+impl Stage {
+    pub fn of(session: &PairingSession, now_unix_ms: u64) -> Self {
+        if let Some(outcome) = session.outcome.as_ref() {
+            return Self::Outcome(outcome.clone());
+        }
+        if let Some(prompt) = session.prompt.as_ref() {
+            return Self::Compare {
+                name: prompt.name.clone(),
+                code: prompt.code.clone(),
+            };
+        }
+        match session.invite.as_ref() {
+            None => Self::Waiting,
+            Some(invite) => Self::Invite {
+                qr: invite.qr.clone(),
+                expired: invite.seconds_left(now_unix_ms) == 0,
+            },
+        }
+    }
+}
+
+pub fn cards(state: Signal<CrossDeviceState>, stage: Stage) -> AnyView {
+    match stage {
+        Stage::Outcome(outcome) => outcome_view(state, outcome).boxed(),
+        Stage::Compare { name, code } => compare_card(state, name, code).boxed(),
+        Stage::Waiting => waiting_card(state).boxed(),
+        Stage::Invite { qr, expired } => card_stack((
+            invite_card(state, qr, expired),
+            when(
+                move |runtime| state.with(runtime, |state| state.nearby().next().is_some()),
+                move |cx| nearby_card(cx, state),
+            ),
+        ))
+        .boxed(),
+    }
+}
+
+fn cancel_button(state: Signal<CrossDeviceState>) -> impl View {
+    acting(
+        row_button("Cancel", ButtonVariant::Ghost),
+        state,
+        CrossDeviceState::end_pairing,
+    )
+}
+
+fn waiting_card(state: Signal<CrossDeviceState>) -> impl View {
     settings_card_titled(
         TITLE,
-        (setting_row_content(inline((
+        (setting_row_content(spread((
             spinner().size(ROW_SPINNER),
             value_text("Preparing a pairing code…"),
-            FlexSpacer::Flex(1.0),
-            cancel_button(),
+            spacer(),
+            cancel_button(state),
         ))),),
     )
 }
 
-fn invite_card(invite: &PairingInvite, now_unix_ms: u64) -> impl WidgetView<Store> + use<> {
-    let seconds_left = invite.seconds_left(now_unix_ms);
-    let expired = seconds_left == 0;
-
-    let (code, clock) = if expired {
-        (None, status("This code has expired").tone(Tone::Warning))
+fn invite_card(state: Signal<CrossDeviceState>, qr: QrMatrix, expired: bool) -> impl View {
+    let clock = if expired {
+        status("This code has expired").tone(Tone::Warning)
     } else {
-        (
-            Some(qr_view(invite)),
-            status(format!("Expires in {}", countdown_text(seconds_left))).tone(Tone::Neutral),
-        )
+        status(bind(move |runtime| {
+            let seconds = state.with(runtime, |state| {
+                state
+                    .pairing
+                    .as_ref()
+                    .and_then(|session| session.invite.as_ref())
+                    .map_or(0, |invite| invite.seconds_left(state.now_unix_ms))
+            });
+            format!("Expires in {}", countdown_text(seconds))
+        }))
+        .tone(Tone::Neutral)
     };
 
-    let steps = flex_col((
+    let steps = vstack((
         headline("Scan with your device"),
         paragraph("Open CrownConnect on your phone or tablet and scan this code."),
         clock,
     ))
-    .gap(INLINE_GAP.px())
-    .cross_axis_alignment(CrossAxisAlignment::Start);
+    .gap(INLINE_GAP)
+    .items_start()
+    .flex_1();
 
-    let renew = expired.then(|| {
-        button("New Code", |store: &mut Store| {
-            store.cross_device.begin_pairing();
-        })
-        .variant(ButtonVariant::Primary)
-        .small()
-    });
+    let code = if expired {
+        nothing().boxed()
+    } else {
+        qr_view(qr).boxed()
+    };
+    let renew = if expired {
+        acting(
+            row_button("New Code", ButtonVariant::Primary),
+            state,
+            CrossDeviceState::begin_pairing,
+        )
+        .boxed()
+    } else {
+        nothing().boxed()
+    };
 
     settings_card_titled(
         TITLE,
         (
             setting_row_content(
-                flex_row((code, steps.flex(1.0)))
-                    .gap(QR_GAP.px())
-                    .cross_axis_alignment(CrossAxisAlignment::Start),
+                hstack((code, steps))
+                    .gap(QR_GAP)
+                    .items_start()
+                    .self_stretch(),
             ),
             settings_divider(),
             setting_row_icon(
-                icons::RADIO,
+                glyph(icons::RADIO),
                 "Or pair with a nearby device: choose this computer in CrownConnect",
                 value_text(""),
             ),
             settings_divider(),
-            setting_row_content(inline((FlexSpacer::Flex(1.0), cancel_button(), renew))),
+            setting_row_content(spread((spacer(), cancel_button(state), renew))),
         ),
     )
 }
 
-/// The invitation at a whole number of pixels per module, nearest-sampled.
-fn qr_view(invite: &PairingInvite) -> impl WidgetView<Store> + use<> {
-    let modules = f64::from(invite.qr.image.width.max(1));
-    let side = (QR_SIDE / modules).floor().max(1.0) * modules;
-    sized_box(image(invite.qr.clone()).fit(ObjectFit::Contain))
-        .width(side.px())
-        .height(side.px())
+/// The invitation at a whole number of pixels per module, painted as one
+/// rectangle per run of dark modules — crisp at any scale, and no texture.
+fn qr_view(qr: QrMatrix) -> impl View {
+    let modules = qr.side().max(1) as f32;
+    let module = (QR_SIDE / modules).floor().max(1.0);
+    let side = module * modules;
+    canvas(move |_, _, list| {
+        list.fill(
+            Rect::from_xywh(0.0, 0.0, side, side),
+            CornerRadii::ZERO,
+            WHITE,
+        );
+        for run in qr.dark_runs() {
+            list.fill(
+                Rect::from_xywh(
+                    run.start as f32 * module,
+                    run.row as f32 * module,
+                    run.length as f32 * module,
+                    module,
+                ),
+                CornerRadii::ZERO,
+                BLACK,
+            );
+        }
+    })
+    .size(side)
+    .shrink(0.0)
 }
 
-fn nearby_card(state: &CrossDeviceState) -> impl WidgetView<Store> + use<> {
-    let rows = state.nearby().map(|device| {
-        setting_row_icon(
-            class_glyph(device.info.class),
-            device.info.name.clone(),
-            value_text("Waiting for it to ask"),
-        )
-        .boxed()
+fn nearby_card(cx: &mut Cx, state: Signal<CrossDeviceState>) -> impl View + use<> {
+    let nearby = derived(cx, move |runtime| {
+        state.with(runtime, |state| listed(state.nearby().cloned()))
     });
-    settings_card_titled("Nearby", separated(rows))
+    settings_card_titled(
+        "Nearby",
+        (for_each(
+            nearby,
+            |row: &Listed<Device>| row.item.info.id,
+            |cx, row| {
+                let name = row.with_untracked(cx, |row| row.item.info.name.clone());
+                vstack((
+                    hairline_unless_first(row),
+                    setting_row_icon(
+                        keyed(
+                            move |runtime| {
+                                row.with(runtime, |row| class_glyph(row.item.info.class))
+                            },
+                            |_, body| glyph(body),
+                        ),
+                        name,
+                        value_text("Waiting for it to ask"),
+                    ),
+                ))
+            },
+        ),),
+    )
 }
 
-fn compare_card(prompt: &PairingPrompt) -> impl WidgetView<Store> + use<> {
-    let code = label(grouped_code(&prompt.code).into_owned())
-        .text_size(CODE_SIZE)
-        .weight(FontWeight::BOLD)
-        .font(INTER)
-        .color(theme().text.primary);
-
-    let body = flex_col((
-        headline(format!("Pair with {}?", prompt.name)),
-        paragraph("Check that the same code is showing on the device."),
-        code,
-    ))
-    .gap(INLINE_GAP.px())
-    .cross_axis_alignment(CrossAxisAlignment::Start);
-
-    let answer: PageView = if prompt.answered {
-        inline((
-            spinner().size(ROW_SPINNER),
-            value_text("Waiting for the device…"),
-        ))
-        .boxed()
-    } else {
-        inline((
-            button("Decline", |store: &mut Store| {
-                store.cross_device.answer_pairing(false);
-            })
-            .variant(ButtonVariant::Secondary)
-            .small(),
-            button("Pair", |store: &mut Store| {
-                store.cross_device.answer_pairing(true);
-            })
-            .variant(ButtonVariant::Primary)
-            .small(),
-        ))
-        .boxed()
+fn compare_card(state: Signal<CrossDeviceState>, name: String, code: String) -> impl View {
+    let answered = move |runtime: &mut _| {
+        state.with(runtime, |state| {
+            state
+                .pairing
+                .as_ref()
+                .and_then(|session| session.prompt.as_ref())
+                .is_some_and(|prompt| prompt.answered)
+        })
     };
+
+    let body = vstack((
+        headline(format!("Pair with {name}?")),
+        paragraph("Check that the same code is showing on the device."),
+        code_label(grouped_code(&code).into_owned()),
+    ))
+    .gap(INLINE_GAP)
+    .items_start();
+
+    let answer = keyed(answered, move |_, answered| {
+        if answered {
+            inline((
+                spinner().size(ROW_SPINNER),
+                value_text("Waiting for the device…"),
+            ))
+            .boxed()
+        } else {
+            inline((
+                acting(
+                    row_button("Decline", ButtonVariant::Secondary),
+                    state,
+                    |state| {
+                        state.answer_pairing(false);
+                    },
+                ),
+                acting(row_button("Pair", ButtonVariant::Primary), state, |state| {
+                    state.answer_pairing(true);
+                }),
+            ))
+            .boxed()
+        }
+    });
 
     settings_card_titled(
         TITLE,
         (
             setting_row_content(body),
             settings_divider(),
-            setting_row_content(inline((FlexSpacer::Flex(1.0), answer))),
+            setting_row_content(spread((spacer(), answer))),
         ),
     )
 }
 
-fn outcome_view(outcome: &PairingOutcome) -> PageView {
+/// The six digits both screens show, large enough to compare at a glance.
+fn code_label(code: String) -> impl View {
+    component(move |cx| {
+        let theme = use_theme(cx);
+        text(code)
+            .text_size(CODE_SIZE)
+            .font_bold()
+            .font_family(INTER_FAMILY)
+            .text_color(tint(theme, |theme| theme.text.primary))
+    })
+}
+
+fn outcome_view(state: Signal<CrossDeviceState>, outcome: PairingOutcome) -> impl View {
     let (notice, retry) = match outcome {
         PairingOutcome::Paired { name } => (
             callout(Tone::Success, format!("Paired with {name}"))
-                .body("It connects on its own whenever it is nearby.")
-                .view(),
+                .body("It connects on its own whenever it is nearby."),
             false,
         ),
         PairingOutcome::Refused => (
             callout(Tone::Danger, "Pairing did not finish")
-                .body("The code was declined, or the device stopped answering.")
-                .view(),
+                .body("The code was declined, or the device stopped answering."),
             true,
         ),
     };
-    let actions = inline((
-        retry.then(|| {
-            button("Try Again", |store: &mut Store| {
-                store.cross_device.begin_pairing();
-            })
-            .variant(ButtonVariant::Secondary)
-        }),
-        button("Done", |store: &mut Store| store.cross_device.end_pairing())
-            .variant(ButtonVariant::Primary),
-    ));
-    flex_col((notice, actions))
-        .gap(INLINE_GAP.px())
-        .cross_axis_alignment(CrossAxisAlignment::Start)
+    let try_again = if retry {
+        acting(
+            button("Try Again").variant(ButtonVariant::Secondary),
+            state,
+            CrossDeviceState::begin_pairing,
+        )
         .boxed()
-}
-
-fn cancel_button() -> impl WidgetView<Store> {
-    button("Cancel", |store: &mut Store| {
-        store.cross_device.end_pairing()
-    })
-    .variant(ButtonVariant::Ghost)
-    .small()
+    } else {
+        nothing().boxed()
+    };
+    let done = acting(
+        button("Done").variant(ButtonVariant::Primary),
+        state,
+        CrossDeviceState::end_pairing,
+    );
+    vstack((notice, inline((try_again, done))))
+        .gap(INLINE_GAP)
+        .items_start()
 }

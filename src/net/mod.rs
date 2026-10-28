@@ -16,19 +16,18 @@
 //!
 //! ## Shape of a backend
 //!
-//! Each submodule here follows the same three-part shape, because it is the
-//! shape xilem's [`worker_raw`](xilem::view::worker_raw) asks for:
+//! Each submodule here follows the same three-part shape, the one
+//! [`spawn_worker`](crate::util::worker::spawn_worker) is built around:
 //!
 //! * a **command** enum — everything the UI can ask the subsystem to do,
 //! * an **event** enum — everything the subsystem can tell the UI, including a
 //!   UI-ready snapshot type that no backend crate's types leak into,
-//! * a **state** struct that lives in the [`Store`](crate::state::Store), holds
-//!   the last event's worth of information, and owns the channel that commands
-//!   travel down.
+//! * a **state** struct, held in a `Signal` in the [`Store`](crate::state::Store),
+//!   that holds the last event's worth of information and owns the channel
+//!   that commands travel down.
 //!
-//! The actual I/O happens in one long-lived future, spawned once when the view
-//! tree is built and aborted when it is torn down, riding in the alongside slot
-//! of [`fork`](xilem::core::fork) exactly like the config watchers do. Nothing
+//! The actual I/O happens in one long-lived future, spawned once by the root
+//! component and cancelled with it, exactly like the config watchers. Nothing
 //! above this module ever awaits anything, holds a lock, or names a backend
 //! crate's type — D-Bus for Wi-Fi, `crownos-ipc` for the wallpaper daemon.
 
@@ -39,5 +38,6 @@
 pub mod audio;
 pub mod crownconnect;
 pub mod outputs;
+pub mod plugins;
 pub mod wallpaper;
 pub mod wifi;

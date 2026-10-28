@@ -14,8 +14,11 @@
 //! splits fall at rows 3, 5 and 6 of the showcase's 9, and its band is a third
 //! of the showcase's height.
 //!
-//! Only cell *units* live here — a cell's pixel size is the grid's business,
+//! Only cell *units* live here — a cell's pixel size is the layout's business,
 //! which is what keeps the pattern independent of how wide the pane is.
+//!
+//! Every section of the pattern is a row of columns, each a single stack of
+//! tiles, so [`columns`] hands a section to flex layout as exactly that.
 
 /// Cell columns every section is laid out across.
 pub const COLUMNS: i32 = 4;
@@ -46,18 +49,63 @@ pub const BAND_ROWS: i32 = 3;
 /// under each — so a short last section fills from the top rather than
 /// leaving a hole in it.
 static SHOWCASE: [Cell; 6] = [
-    Cell { x: 0, y: 0, width: 2, height: 5 },
-    Cell { x: 2, y: 0, width: 1, height: 3 },
-    Cell { x: 3, y: 0, width: 1, height: 6 },
-    Cell { x: 2, y: 3, width: 1, height: 6 },
-    Cell { x: 0, y: 5, width: 2, height: 4 },
-    Cell { x: 3, y: 6, width: 1, height: 3 },
+    Cell {
+        x: 0,
+        y: 0,
+        width: 2,
+        height: 5,
+    },
+    Cell {
+        x: 2,
+        y: 0,
+        width: 1,
+        height: 3,
+    },
+    Cell {
+        x: 3,
+        y: 0,
+        width: 1,
+        height: 6,
+    },
+    Cell {
+        x: 2,
+        y: 3,
+        width: 1,
+        height: 6,
+    },
+    Cell {
+        x: 0,
+        y: 5,
+        width: 2,
+        height: 4,
+    },
+    Cell {
+        x: 3,
+        y: 6,
+        width: 1,
+        height: 3,
+    },
 ];
 
 static BAND: [Cell; 3] = [
-    Cell { x: 0, y: 0, width: 1, height: 3 },
-    Cell { x: 1, y: 0, width: 1, height: 3 },
-    Cell { x: 2, y: 0, width: 2, height: 3 },
+    Cell {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 3,
+    },
+    Cell {
+        x: 1,
+        y: 0,
+        width: 1,
+        height: 3,
+    },
+    Cell {
+        x: 2,
+        y: 0,
+        width: 2,
+        height: 3,
+    },
 ];
 
 /// Tiles the showcase holds, and how many a block holds in total.
@@ -73,6 +121,33 @@ pub fn showcase(block: usize) -> impl Iterator<Item = Cell> {
 /// row.
 pub fn band(block: usize) -> impl Iterator<Item = Cell> {
     laid_out(&BAND, block)
+}
+
+/// One column of a section: its left edge and width in cells, and its tiles
+/// top to bottom as `(reading-order index, height in cells)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Column {
+    pub x: i32,
+    pub width: i32,
+    pub tiles: Vec<(usize, i32)>,
+}
+
+/// A section's cells regrouped into its columns, left to right.
+pub fn columns(cells: impl Iterator<Item = Cell>) -> Vec<Column> {
+    let mut columns: Vec<Column> = Vec::with_capacity(COLUMNS as usize);
+    let mut cells: Vec<(usize, Cell)> = cells.enumerate().collect();
+    cells.sort_by_key(|(_, cell)| (cell.x, cell.y));
+    for (index, cell) in cells {
+        match columns.last_mut().filter(|column| column.x == cell.x) {
+            Some(column) => column.tiles.push((index, cell.height)),
+            None => columns.push(Column {
+                x: cell.x,
+                width: cell.width,
+                tiles: vec![(index, cell.height)],
+            }),
+        }
+    }
+    columns
 }
 
 fn laid_out(cells: &'static [Cell], block: usize) -> impl Iterator<Item = Cell> {
@@ -92,12 +167,19 @@ mod tests {
             for y in cell.y..cell.y + cell.height {
                 for x in cell.x..cell.x + cell.width {
                     assert!(!taken.contains(&(x, y)), "cell ({x}, {y}) claimed twice");
-                    assert!(x < COLUMNS && y < rows, "cell ({x}, {y}) is outside the section");
+                    assert!(
+                        x < COLUMNS && y < rows,
+                        "cell ({x}, {y}) is outside the section"
+                    );
                     taken.push((x, y));
                 }
             }
         }
-        assert_eq!(taken.len() as i32, COLUMNS * rows, "and no cell is left empty");
+        assert_eq!(
+            taken.len() as i32,
+            COLUMNS * rows,
+            "and no cell is left empty"
+        );
         taken
     }
 
@@ -113,10 +195,7 @@ mod tests {
     /// the showcase would read as ordinary rows rather than as a composition.
     #[test]
     fn no_two_columns_of_the_showcase_break_at_the_same_row() {
-        let mut breaks: Vec<i32> = showcase(0)
-            .map(|cell| cell.y)
-            .filter(|&y| y != 0)
-            .collect();
+        let mut breaks: Vec<i32> = showcase(0).map(|cell| cell.y).filter(|&y| y != 0).collect();
         breaks.sort_unstable();
         let unique = {
             let mut seen = breaks.clone();
@@ -128,15 +207,56 @@ mod tests {
     }
 
     #[test]
+    fn a_section_is_a_row_of_single_stacks() {
+        assert_eq!(
+            columns(showcase(0)),
+            [
+                Column {
+                    x: 0,
+                    width: 2,
+                    tiles: vec![(0, 5), (4, 4)]
+                },
+                Column {
+                    x: 2,
+                    width: 1,
+                    tiles: vec![(1, 3), (3, 6)]
+                },
+                Column {
+                    x: 3,
+                    width: 1,
+                    tiles: vec![(2, 6), (5, 3)]
+                },
+            ]
+        );
+        for block in 0..4 {
+            for column in columns(showcase(block)) {
+                let height: i32 = column.tiles.iter().map(|(_, height)| height).sum();
+                assert_eq!(height, SHOWCASE_ROWS, "every column spans the section");
+            }
+        }
+        assert_eq!(columns(band(1)).first().map(|column| column.width), Some(2));
+    }
+
+    #[test]
     fn the_next_block_is_the_mirror_of_this_one() {
         assert_eq!(
             showcase(1).next(),
-            Some(Cell { x: 2, y: 0, width: 2, height: 5 }),
+            Some(Cell {
+                x: 2,
+                y: 0,
+                width: 2,
+                height: 5
+            }),
             "the hero changes sides"
         );
         assert_eq!(
             band(1).last(),
-            Some(Cell { x: 0, y: 0, width: 2, height: 3 }),
+            Some(Cell {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 3
+            }),
             "and so does the band's wide tile"
         );
         assert_eq!(

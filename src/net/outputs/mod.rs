@@ -2,14 +2,14 @@
 //!
 //! The house shape (see [`crate::net`]): a command enum, an event enum, and a
 //! [`OutputState`] in the [`Store`](crate::state::Store). Like the other two
-//! backends it is one long-lived future on xilem's tokio runtime — see
+//! backends it is one long-lived future on CrownUI's tokio runtime — see
 //! [`protocol`] for why the Wayland socket is polled rather than blocked on.
 //!
 //! ## Why a second Wayland connection
 //!
-//! winit already holds one for the window. This is a separate conversation
+//! CrownUI already holds one for the window. This is a separate conversation
 //! about every monitor in the session rather than anything to do with this
-//! app's surface, and `zwlr_output_management_v1` is not something winit
+//! app's surface, and `zwlr_output_management_v1` is not something CrownUI
 //! exposes — so it gets its own connection, which is what every other tool
 //! that speaks this protocol does too.
 //!
@@ -37,16 +37,12 @@ mod protocol;
 
 use std::time::Duration;
 
-use xilem::{
-    ViewCtx,
-    core::{MessageProxy, NoElement, View},
-    tokio::{
-        select,
-        sync::mpsc::{UnboundedReceiver, UnboundedSender},
-        time::{Instant, sleep_until},
-    },
-    view::worker_raw,
-};
+use crownui::prelude::{Cx, Signal};
+use tokio::select;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::time::{Instant, sleep_until};
+
+use crate::util::worker::{MessageProxy, spawn_worker};
 
 /// How long a newly applied arrangement has to be confirmed before it is
 /// rolled back.
@@ -169,6 +165,12 @@ impl Monitor {
             adaptive_sync: self.adaptive_sync,
         }
     }
+
+    /// The desktop area it covers now, in logical pixels; zero without a mode.
+    pub fn logical_size(&self) -> (i32, i32) {
+        let mode = self.current_mode.and_then(|index| self.modes.get(index));
+        logical_size(mode, self.scale, self.transform)
+    }
 }
 
 /// A logical rectangle: where a monitor starts, and how big it is.
@@ -214,7 +216,10 @@ impl MonitorDraft {
     /// would cover. The mode list is the monitor's, so it has to be given.
     fn geometry(&self, monitor: &Monitor) -> Rect {
         let mode = self.mode.and_then(|index| monitor.modes.get(index));
-        (self.position, logical_size(mode, self.scale, self.transform))
+        (
+            self.position,
+            logical_size(mode, self.scale, self.transform),
+        )
     }
 }
 
@@ -310,7 +315,10 @@ impl OutputState {
                 // second kind would strand the page on "unapplied changes"
                 // forever the moment anything else — `wlr-randr`, a config
                 // reload, this app's own apply — moved a monitor.
-                self.drafts = monitors.iter().map(|monitor| self.rebased(monitor)).collect();
+                self.drafts = monitors
+                    .iter()
+                    .map(|monitor| self.rebased(monitor))
+                    .collect();
 
                 if self
                     .selected
@@ -369,9 +377,10 @@ impl OutputState {
     /// The draft `monitor` should have after a fresh snapshot: the user's
     /// edit if they made one, and otherwise the monitor as it now is.
     fn rebased(&self, monitor: &Monitor) -> MonitorDraft {
-        let edited = self
-            .draft(&monitor.name)
-            .filter(|draft| self.monitor(&monitor.name).is_some_and(|was| **draft != was.to_draft()));
+        let edited = self.draft(&monitor.name).filter(|draft| {
+            self.monitor(&monitor.name)
+                .is_some_and(|was| **draft != was.to_draft())
+        });
 
         edited.cloned().unwrap_or_else(|| monitor.to_draft())
     }
@@ -386,10 +395,11 @@ impl OutputState {
             .filter_map(|draft| Some(draft.geometry(self.monitor(&draft.name)?)))
             .collect();
 
-        boxes
-            .iter()
-            .enumerate()
-            .any(|(index, left)| boxes[index + 1..].iter().any(|right| intersects(*left, *right)))
+        boxes.iter().enumerate().any(|(index, left)| {
+            boxes[index + 1..]
+                .iter()
+                .any(|right| intersects(*left, *right))
+        })
     }
 
     /// Lays the enabled monitors out in one row, left to right, keeping the
@@ -484,23 +494,15 @@ impl OutputState {
     }
 }
 
-/// The backend, as a view that draws nothing.
-pub fn output_worker<State, F>(
-    outputs: fn(&mut State) -> &mut OutputState,
-    on_event: F,
-) -> impl View<State, (), ViewCtx, Element = NoElement> + Send + Sync
-where
-    State: 'static,
-    F: Fn(&mut State, &OutputEvent) + Send + Sync + 'static,
-{
-    worker_raw(
-        run,
-        move |state: &mut State, sender| outputs(state).attach(sender),
-        move |state: &mut State, event: OutputEvent| {
-            on_event(state, &event);
-            outputs(state).apply_event(event);
-        },
-    )
+/// Starts the monitor backend for as long as the calling component lives.
+///
+/// Nothing is mirrored into a RON file: the compositor persists the
+/// arrangement itself, and a copy here would be a second source of truth.
+pub fn output_worker(cx: &mut Cx, outputs: Signal<OutputState>) {
+    let sender = spawn_worker(cx, run, move |cx, event| {
+        outputs.update(cx, |state| state.apply_event(event));
+    });
+    outputs.update(cx, |state| state.attach(sender));
 }
 
 /// The page's last word when the conversation ends, whatever ended it.
@@ -715,7 +717,10 @@ mod tests {
         state.apply_event(OutputEvent::Reverted);
         assert!(!state.is_dirty(), "the drafts go back to what is real");
         assert!(state.pending_revert.is_none());
-        assert!(state.error.is_some(), "the user is told why it changed back");
+        assert!(
+            state.error.is_some(),
+            "the user is told why it changed back"
+        );
     }
 
     #[test]
@@ -821,7 +826,10 @@ mod tests {
         // swallow DP-2 where it stands.
         state.edit("DP-1", |draft| draft.scale = 1.0);
 
-        assert_eq!(state.draft("DP-1").map(|draft| draft.position), Some((0, 0)));
+        assert_eq!(
+            state.draft("DP-1").map(|draft| draft.position),
+            Some((0, 0))
+        );
         assert_eq!(
             state.draft("DP-2").map(|draft| draft.position),
             Some((3840, 0)),
@@ -839,8 +847,14 @@ mod tests {
 
         state.edit("DP-2", |draft| draft.enabled = true);
 
-        assert!(!state.overlaps(), "an overlapping arrangement is always refused");
-        assert_eq!(state.draft("DP-2").map(|draft| draft.position), Some((1920, 0)));
+        assert!(
+            !state.overlaps(),
+            "an overlapping arrangement is always refused"
+        );
+        assert_eq!(
+            state.draft("DP-2").map(|draft| draft.position),
+            Some((1920, 0))
+        );
     }
 
     #[test]
@@ -861,8 +875,10 @@ mod tests {
         let mut state = OutputState::default();
         state.apply_event(OutputEvent::Unavailable("no support".into()));
 
-        assert!(state.loaded, "the page must stop saying it is still looking");
+        assert!(
+            state.loaded,
+            "the page must stop saying it is still looking"
+        );
         assert_eq!(state.unavailable.as_deref(), Some("no support"));
     }
 }
-

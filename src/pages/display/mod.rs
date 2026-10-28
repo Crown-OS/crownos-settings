@@ -14,33 +14,33 @@ mod light;
 mod monitors;
 mod selected;
 
-use blinc_icons::icons;
+use crownui::kit::icons;
+use crownui::prelude::{AnyView, Cx, IntoProp, View};
 
-use crate::controls::value_text;
-use crate::layout::setting_row_content;
-use crate::pages::{PageDescriptor, PageView, page};
+use crate::layout::{setting_row_content, value_text};
+use crate::pages::{PageDescriptor, page};
 use crate::state::Store;
-use xilem::WidgetView;
 
 pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Display",
+    slug: "display",
     icon: icons::MONITOR,
     build,
 };
 
-fn build(store: &Store) -> PageView {
+fn build(cx: &mut Cx, store: Store) -> AnyView {
     page(
         &PAGE,
         (
-            monitors::card(store),
+            monitors::card(cx, store),
             selected::card(store),
-            light::brightness_card(store),
-            light::night_light_card(store),
+            light::brightness_card(cx, store),
+            light::night_light_card(cx, store),
         ),
     )
 }
 
 /// A full-width line of text inside a card, for status and errors.
-fn status_row(text: String) -> impl WidgetView<Store> + use<> {
+fn status_row(text: impl IntoProp<String> + 'static) -> impl View {
     setting_row_content(value_text(text))
 }

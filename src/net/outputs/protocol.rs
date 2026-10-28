@@ -13,13 +13,14 @@
 //! channel until an unrelated hotplug flushed it out.
 //!
 //! So readiness comes from the connection's file descriptor instead, and the
-//! whole conversation rides xilem's tokio runtime like the other two backends
+//! whole conversation rides CrownUI's tokio runtime like the other backends
 //! in [`crate::net`]. Commands are then just another branch of the same
 //! `select!`, and there is no thread to synchronise with.
 
 use std::io::ErrorKind;
 use std::os::fd::{AsFd, AsRawFd, RawFd};
 
+use tokio::io::unix::AsyncFd;
 use wayland_client::{
     Connection, Dispatch, DispatchError, EventQueue, Proxy, QueueHandle, WEnum,
     backend::WaylandError,
@@ -34,7 +35,6 @@ use wayland_protocols_wlr::output_management::v1::client::{
     zwlr_output_manager_v1::{self, ZwlrOutputManagerV1},
     zwlr_output_mode_v1::{self, ZwlrOutputModeV1},
 };
-use xilem::tokio::io::unix::AsyncFd;
 
 use super::{Mode, Monitor, MonitorDraft, Outcome, OutputEvent, Transform};
 
@@ -58,12 +58,12 @@ pub struct Session {
 impl Session {
     /// Opens the conversation, or says in one human sentence why there is none.
     ///
-    /// A separate connection from the one winit holds for the window: this is
+    /// A separate connection from the one CrownUI holds for the window: this is
     /// a session-wide conversation about every monitor rather than anything to
-    /// do with this app's surface, and winit does not expose its own.
+    /// do with this app's surface, and CrownUI does not expose its own.
     pub fn connect() -> Result<Self, String> {
-        let connection = Connection::connect_to_env()
-            .map_err(|err| format!("no Wayland connection: {err}"))?;
+        let connection =
+            Connection::connect_to_env().map_err(|err| format!("no Wayland connection: {err}"))?;
 
         let (globals, queue) = registry_queue_init::<State>(&connection)
             .map_err(|err| format!("the Wayland registry is unreadable: {err}"))?;
@@ -183,7 +183,7 @@ impl Session {
     ///
     /// The read guard is taken *after* the await rather than around it. It is
     /// not `Send`, and holding one across a suspension point would make this
-    /// whole future `!Send` — which xilem's worker will not accept. Nothing is
+    /// whole future `!Send` — which `cx.spawn` will not accept. Nothing is
     /// lost by the later claim: anything that arrived in the meantime makes
     /// `prepare_read` decline, and the next turn dispatches it.
     async fn pump(&mut self) -> Result<(), DispatchError> {

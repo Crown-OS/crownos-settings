@@ -9,7 +9,7 @@
 //! most often.
 //!
 //! So a write is queued here instead, and one background thread does it. The
-//! thread is deliberately a thread and not a task on xilem's runtime: this is
+//! thread is deliberately a thread and not a task on CrownUI's runtime: this is
 //! blocking file I/O, which is exactly what an async worker must not do, and
 //! nothing here has a reason to be woken by anything but a queued write.
 //!
@@ -43,7 +43,10 @@ const DEBOUNCE: Duration = Duration::from_millis(200);
 type Write = Box<dyn FnOnce() + Send>;
 
 enum Job {
-    Save { section: &'static str, write: Write },
+    Save {
+        section: &'static str,
+        write: Write,
+    },
     /// Write everything queued now, and say when that is done.
     Flush(mpsc::SyncSender<()>),
 }
