@@ -63,7 +63,6 @@ fn plugin_settings(
     section: SettingsSection,
 ) -> AnyView {
     state.update(cx, |state| state.load_settings(id.to_owned()));
-    let icon = lucide_icon(&section.icon);
     let about = (!section.description.is_empty())
         .then(|| settings_card((setting_row_content(paragraph(section.description.clone())),)));
     let fields = fields_card(cx, state, id, &section.fields);
@@ -71,13 +70,12 @@ fn plugin_settings(
         move |runtime| state.with(runtime, |state| state.error.clone()),
         move |_, message| error_card(state, message),
     );
-    settings_page(section.title, icon, (failure, about, fields)).boxed()
+    settings_page(section.title, (failure, about, fields)).boxed()
 }
 
 fn gone() -> impl View {
     settings_page(
         "Plugin",
-        icons::PUZZLE,
         (callout(
             Tone::Neutral,
             "This plugin's settings are no longer available",
