@@ -2,7 +2,7 @@ use crownui::kit::{sidebar, slide_transition, use_theme};
 use crownui::prelude::{Curve, Cx, Styled, View, component, vstack, zstack};
 
 use super::Navigation;
-use super::theme::provide_app_theme;
+use super::theme::{provide_app_theme, provide_app_window_radius};
 use crate::pages;
 use crate::sidebar::sidebar_menus;
 use crate::state::Store;
@@ -22,6 +22,7 @@ pub fn root(plugin: Option<String>, page: Option<usize>) -> impl View {
     component(move |cx| {
         let store = Store::load(cx);
         provide_app_theme(cx, store);
+        provide_app_window_radius(cx, store);
         store.start(cx);
         let ordinal = match plugin {
             Some(id) => {
