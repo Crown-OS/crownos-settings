@@ -6,10 +6,13 @@ use super::theme::{provide_app_theme, provide_app_window_radius};
 use crate::pages;
 use crate::sidebar::sidebar_menus;
 use crate::state::Store;
-use crate::util::theme::tint;
+use crate::util::theme::{tint, with_translucency_factor};
 
 /// The kit's palette cross-fade, so the window backdrop changes with the cards.
 const THEME_FADE_MILLIS: u64 = 240;
+/// How much of the surface's translucency the backdrop behind the sidebar and
+/// toolbar keeps; the content card paints the surface as it is.
+const CHROME_TRANSLUCENCY: f32 = 0.5;
 
 /// Sidebar on the left, the current page sliding in the content pane on the
 /// right, over a backdrop in the theme's surface color.
@@ -48,7 +51,9 @@ pub(super) fn shell(cx: &mut Cx, store: Store, ordinal: usize) -> impl View + us
     let backdrop = vstack(())
         .w_full()
         .h_full()
-        .bg(tint(theme, |theme| theme.surface.bg))
+        .bg(tint(theme, |theme| {
+            with_translucency_factor(theme.surface.bg, CHROME_TRANSLUCENCY)
+        }))
         .transition(Curve::ease_in_out(THEME_FADE_MILLIS));
 
     let menus = sidebar_menus(cx, navigation, store);
