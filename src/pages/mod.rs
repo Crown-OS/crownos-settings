@@ -39,7 +39,7 @@ pub type Build = fn(&mut Cx, Store) -> AnyView;
 
 /// Everything the app needs to know about one settings page.
 pub struct PageDescriptor {
-    /// The sidebar label, which doubles as the page's heading.
+    /// The sidebar label, which also names the page for assistive technology.
     pub title: &'static str,
     /// The name other apps open the page by: `crownsettings <slug>` or
     /// `crown://settings/<slug>`.
@@ -135,10 +135,9 @@ pub fn shows_wallpapers(ordinal: usize) -> bool {
 
 // --- MARK: Page frame ---
 
-/// The frame every page shares, from the page's own descriptor so the sidebar
-/// icon and the header's icon chip can never drift apart.
+/// The frame every page shares, named after the page's own descriptor.
 fn page(desc: &'static PageDescriptor, cards: impl ViewSeq + 'static) -> AnyView {
-    settings_page(desc.title, desc.icon, cards).boxed()
+    settings_page(desc.title, cards).boxed()
 }
 
 #[cfg(test)]
