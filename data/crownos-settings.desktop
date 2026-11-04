@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=CrownOS Settings
+GenericName=Settings
+Comment=Configure CrownOS
+Exec=crownsettings
+Icon=preferences-system
+Terminal=false
+StartupWMClass=crownsettings
+Categories=Settings;DesktopSettings;
+Keywords=settings;preferences;configuration;wifi;network;appearance;wallpaper;lock;sound;
