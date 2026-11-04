@@ -15,6 +15,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Notifications",
     slug: "notifications",
     icon: icons::BELL,
+    keywords: &[],
     build,
 };
 

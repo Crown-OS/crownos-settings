@@ -34,6 +34,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Battery & Power",
     slug: "battery",
     icon: icons::BATTERY_FULL,
+    keywords: &[],
     build,
 };
 

@@ -7,6 +7,7 @@ pub mod bento;
 pub mod bridge;
 pub mod clock;
 pub mod deadline;
+pub mod follow_watch;
 pub mod home;
 pub mod jpeg;
 pub mod lucide;

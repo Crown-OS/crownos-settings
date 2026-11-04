@@ -21,10 +21,10 @@ mod slider;
 mod switch;
 mod text;
 
-pub use choice::{auto_name_choice, choice, field_choice, name_choice};
+pub use choice::{NamedOption, auto_name_choice, choice, field_choice, name_choice};
 pub use keybind::keybind;
 pub use options::Options;
 pub use segments::{apart, exact, segments};
 pub use slider::{fraction_slider, percent_slider};
-pub use switch::switch;
+pub use switch::{switch, switch_then};
 pub use text::field_text;

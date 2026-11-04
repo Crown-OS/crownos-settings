@@ -28,6 +28,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Plugins & Themes",
     slug: "plugins",
     icon: icons::PUZZLE,
+    keywords: &[],
     build,
 };
 

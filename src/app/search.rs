@@ -14,8 +14,8 @@ struct PageMatch {
     suggestion: Suggestion,
 }
 
-/// The header's search bar: offers every page whose title or slug holds the
-/// query, and opens the one picked — or the first match on Enter.
+/// The header's search bar: offers every page whose title, slug or keywords
+/// hold the query, and opens the one picked — or the first match on Enter.
 pub fn page_search(cx: &mut Cx, navigation: Navigation, store: Store) -> impl View + use<> {
     let query = cx.signal(String::new());
     let suggestions = derived(cx, move |runtime| {
@@ -52,7 +52,9 @@ fn matches(runtime: &mut Runtime, store: Store, query: Signal<String>) -> Vec<Pa
         .iter()
         .flat_map(|group| group.pages.iter().map(move |page| (group.label, page)))
         .enumerate()
-        .filter(|(_, (_, page))| holds(page.title) || holds(page.slug))
+        .filter(|(_, (_, page))| {
+            holds(page.title) || holds(page.slug) || page.keywords.iter().any(|word| holds(word))
+        })
         .map(|(ordinal, (label, page))| PageMatch {
             ordinal,
             suggestion: suggestion(page.title).icon(page.icon).detail(label),

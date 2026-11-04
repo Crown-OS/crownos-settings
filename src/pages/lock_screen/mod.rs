@@ -23,6 +23,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Lock Screen",
     slug: "lock-screen",
     icon: icons::LOCK,
+    keywords: &[],
     build,
 };
 

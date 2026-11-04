@@ -7,73 +7,117 @@
 //! # Why there is no worker here
 //!
 //! Every other backend under [`crate::net`] is a long-lived future with a
-//! command channel, because it is watching something that changes while the
-//! window is open and can be asked to act on it. This one is neither. There is
-//! nothing to command — the Input page picks a name and writes it to a file —
-//! and enumerating devices is a handful of synchronous calls into the audio
-//! host. They take tens of milliseconds under ALSA, so the store makes them
-//! once on the blocking pool; a channel and an event enum on top of that would
-//! be machinery standing in for a function call.
+//! command channel, because it can be asked to act on what it watches. This
+//! one cannot — the Input page picks a name and writes it to a file — and
+//! CrownUI's audio crate already watches the PipeWire graph on a thread of its
+//! own, publishing every hotplug and default change on a `watch` channel. So
+//! the store mirrors that channel into a signal, and a microphone plugged in
+//! while the window is open shows up in the picker straight away.
 //!
-//! The cost is that a microphone plugged in while the window is open does not
-//! appear until it is reopened. That is the honest trade for now; when it starts
-//! to bite, the fix is a real worker in the shape [`crate::net`] describes, and
-//! the page above does not change either way — it reads a list of names.
+//! # Why PipeWire node names
 //!
-//! # Why cpal, and not `pactl` or D-Bus
-//!
-//! The name in `input.ron` has to be one that [crowndictator] can open, and
-//! crowndictator opens its microphone through `cpal`. A device list assembled
-//! from anywhere else would be a list of names that look right in the settings
-//! panel and match nothing at record time.
+//! The name in `input.ron`'s `dictation_microphone` has to be one that
+//! [crowndictator] can open, and crowndictator opens its microphone by PipeWire
+//! `node.name` through the same audio crate. The picker shows each node's
+//! description and stores its node name. crown-voiced's own enhanced
+//! `crownos-voice.*` nodes are never listed: the crate leaves them out, as
+//! apps reach them by asking for enhancement rather than by picking them.
 //!
 //! [crowndictator]: https://github.com/crown-os/crowndictator
 
-use cpal::traits::{DeviceTrait, HostTrait};
+use audio::SourceInfo;
+use crownui::prelude::{Cx, Signal};
 
-/// Every input device the default audio host can name, deduplicated and in the
-/// order the host reports them.
+use crate::util::follow_watch::follow_watch;
+
+/// One capture device, as the Input page's picker needs it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Microphone {
+    /// The PipeWire `node.name`, which is what `input.ron` stores.
+    pub node_name: String,
+    /// What the picker shows, such as "Built-in Audio Analog Stereo".
+    pub description: String,
+}
+
+/// What is plugged in, in the order PipeWire announced it.
 ///
-/// Best effort by design: a machine with no sound server, or one whose host
-/// fails to enumerate, gets an empty list and an Input page that offers only
-/// "Automatic" — which is a working configuration, not an error state, so
-/// nothing here is worth interrupting the user over.
-pub fn microphones() -> Vec<String> {
-    let host = cpal::default_host();
-    let Ok(devices) = host.input_devices() else {
-        log_failure("could not enumerate audio input devices");
-        return Vec::new();
-    };
+/// Empty on a machine without PipeWire, which leaves the Input page offering
+/// only "Automatic" — a working configuration, not an error state.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Microphones {
+    pub available: Vec<Microphone>,
+    /// The system default's description, for labelling the "Automatic" choice
+    /// with what it actually means right now.
+    pub default: Option<String>,
+}
 
-    let mut names: Vec<String> = Vec::new();
-    for device in devices {
-        // A device whose name cannot be read cannot be written to `input.ron`
-        // either, so it is skipped rather than listed as something blank.
-        let Ok(name) = device.name() else { continue };
-        // ALSA in particular reports the same card under several descriptions;
-        // two identical rows in the picker would be two rows that do the same
-        // thing.
-        if !names.contains(&name) {
-            names.push(name);
+impl Microphones {
+    fn from_sources(sources: &[SourceInfo]) -> Self {
+        Self {
+            available: sources
+                .iter()
+                .map(|source| Microphone {
+                    node_name: source.id.as_str().to_owned(),
+                    description: source.description.clone(),
+                })
+                .collect(),
+            default: sources
+                .iter()
+                .find(|source| source.is_default)
+                .map(|source| source.description.clone()),
         }
     }
-    names
+
+    /// Whether a microphone with this node name is plugged in.
+    pub fn has(&self, node_name: &str) -> bool {
+        self.available
+            .iter()
+            .any(|microphone| microphone.node_name == node_name)
+    }
 }
 
-/// The default input device's name, for labelling the "Automatic" choice with
-/// what it currently resolves to — the way macOS writes
-/// "Automatic (MacBook Air Microphone)".
-///
-/// `None` when there is no default, which is what an empty
-/// [`microphones`] list also means.
-pub fn default_microphone() -> Option<String> {
-    cpal::default_host()
-        .default_input_device()
-        .and_then(|device| device.name().ok())
+/// Keeps `microphones` in step with the PipeWire graph for as long as the
+/// calling component lives.
+pub fn follow_microphones(cx: &mut Cx, microphones: Signal<Microphones>) {
+    follow_watch(cx, audio::sources(), microphones, |sources: &Vec<_>| {
+        Microphones::from_sources(sources)
+    });
 }
 
-/// Enumeration failing is worth a line on stderr and nothing more — see
-/// [`microphones`].
-fn log_failure(message: &str) {
-    eprintln!("crownsettings: {message}");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use audio::SourceId;
+
+    fn source(node_name: &str, description: &str, is_default: bool) -> SourceInfo {
+        SourceInfo {
+            id: SourceId::new(node_name),
+            description: description.to_owned(),
+            is_default,
+        }
+    }
+
+    #[test]
+    fn the_picker_shows_descriptions_and_stores_node_names() {
+        let microphones = Microphones::from_sources(&[
+            source("alsa_input.pci-analog", "Built-in Audio", false),
+            source("alsa_input.usb-yeti", "Yeti Stereo Microphone", true),
+        ]);
+        assert_eq!(
+            microphones.available[1],
+            Microphone {
+                node_name: "alsa_input.usb-yeti".to_owned(),
+                description: "Yeti Stereo Microphone".to_owned(),
+            }
+        );
+        assert_eq!(
+            microphones.default.as_deref(),
+            Some("Yeti Stereo Microphone")
+        );
+        assert!(microphones.has("alsa_input.pci-analog"));
+        assert!(
+            !microphones.has("Built-in Audio"),
+            "a description is not a node name"
+        );
+    }
 }

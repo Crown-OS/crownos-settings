@@ -112,6 +112,16 @@ fn enter_opens_the_first_match() {
     assert!(app.exists(role(Role::ScrollView).name("Battery & Power")));
 }
 
+#[test]
+fn a_keyword_finds_the_page_that_holds_it() {
+    let mut app = window(pages::DEFAULT_PAGE, false);
+    app.click(role(Role::SearchField));
+    press(&mut app, "noise");
+    app.press_key("Enter");
+    app.settle();
+    assert!(app.exists(role(Role::ScrollView).name("Voice")));
+}
+
 fn press(app: &mut TestApp, keys: &str) {
     for key in keys.chars() {
         app.press_key(&key.to_string());
@@ -220,6 +230,59 @@ fn a_missing_plugin_daemon_reads_as_a_calm_notice() {
     );
     app.settle();
     assert!(app.exists(text("Plugins aren't running")));
+}
+
+/// The enhancement belongs to the system-wide microphone, so it waits for
+/// that to be switched on; the hardware choice applies to every stream.
+#[test]
+fn the_enhancement_waits_for_the_all_apps_switch() {
+    let mut app = window(ordinal_of("Voice"), false);
+    app.settle();
+    assert_eq!(app.find(role(Role::Switch)).states.checked, Some(false));
+    assert!(
+        app.find(role(Role::ComboBox).name("Noise suppression"))
+            .states
+            .disabled
+    );
+    assert!(
+        !app.find(role(Role::ComboBox).name("Automatic"))
+            .states
+            .disabled
+    );
+    assert!(app.exists(text("Checking…")));
+}
+
+#[test]
+fn the_voice_status_names_the_backend_or_stays_calm_without_one() {
+    let mut app = window(ordinal_of("Voice"), true);
+    app.settle();
+    assert!(app.exists(text("cpu: Ryzen 7 7840U")));
+
+    let mut app = TestApp::with_size(
+        component(|cx| {
+            let store = Store::defaults(cx);
+            store.voice.update(cx, |voice| {
+                voice.service = crate::net::voice::VoiceService::NotInstalled;
+            });
+            shell(cx, store, ordinal_of("Voice"))
+        }),
+        WIDTH,
+        HEIGHT,
+    );
+    app.settle();
+    assert!(app.exists(text("Not installed")));
+    assert!(!app.exists(role(Role::Dialog)));
+}
+
+#[test]
+fn the_microphone_picker_lists_pipewire_sources_by_description() {
+    let mut app = window(ordinal_of("Input"), true);
+    app.settle();
+    assert!(
+        app.exists(role(Role::ComboBox).name("Automatic (Built-in Audio)")),
+        "{}",
+        app.semantics_snapshot()
+    );
 }
 
 /// Renders every page through Impeller's offscreen GLES target into
