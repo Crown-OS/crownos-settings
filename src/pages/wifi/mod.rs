@@ -44,6 +44,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Wi-Fi",
     slug: "network",
     icon: icons::WIFI,
+    keywords: &[],
     build,
 };
 

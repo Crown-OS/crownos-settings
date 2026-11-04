@@ -15,6 +15,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Bluetooth",
     slug: "bluetooth",
     icon: icons::BLUETOOTH,
+    keywords: &[],
     build,
 };
 

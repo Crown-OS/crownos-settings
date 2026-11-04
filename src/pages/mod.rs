@@ -22,6 +22,7 @@ mod plugins;
 mod power;
 mod screenshot;
 mod sound;
+mod voice;
 mod wifi;
 
 use crownui::prelude::{AnyView, Cx, View, ViewSeq};
@@ -46,6 +47,9 @@ pub struct PageDescriptor {
     pub slug: &'static str,
     /// Lucide-style SVG body for the sidebar icon.
     pub icon: &'static str,
+    /// More words the sidebar search finds the page by, beyond its title and
+    /// slug: what is on it, in the words someone looking for it would use.
+    pub keywords: &'static [&'static str],
     pub build: Build,
 }
 
@@ -70,6 +74,7 @@ pub static GROUPS: &[PageGroup] = &[
             plugins::PAGE,
             display::PAGE,
             sound::PAGE,
+            voice::PAGE,
             input::PAGE,
         ],
     },

@@ -27,9 +27,11 @@ use crownos_config::schema::{appearance, wifi};
 use crownui::prelude::{Cx, Runtime, Signal};
 
 use crate::config::{Section, Settings};
+use crate::net::audio::{Microphones, follow_microphones};
 use crate::net::crownconnect::{CrossDeviceState, crownconnect_worker};
 use crate::net::outputs::{OutputState, output_worker};
 use crate::net::plugins::{PluginsState, plugins_worker};
+use crate::net::voice::{VoiceState, voice_worker};
 use crate::net::wallpaper::{WallpaperEvent, WallpaperState, wallpaper_worker};
 use crate::net::wifi::{WifiEvent, WifiSnapshot, WifiState, wifi_worker};
 
@@ -51,29 +53,11 @@ pub struct Store {
     pub cross_device: Signal<CrossDeviceState>,
     /// The themes and plugins crownplugind runs, and their settings.
     pub plugins: Signal<PluginsState>,
-    /// The microphones this machine has — read once, off the interface's
-    /// thread, see [`crate::net::audio`] for why it is not watched.
+    /// The microphones in the PipeWire graph, followed as they come and go;
+    /// see [`crate::net::audio`] for why that needs no worker.
     pub microphones: Signal<Microphones>,
-}
-
-/// What is plugged in, as the Input page's device picker needs it.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Microphones {
-    /// Every input device, by the name `cpal` gives it.
-    pub names: Vec<String>,
-    /// The name the system default currently resolves to, for labelling the
-    /// "Automatic" choice with what it actually means right now.
-    pub default: Option<String>,
-}
-
-impl Microphones {
-    /// Ask the audio host. See [`crate::net::audio`].
-    fn probe() -> Self {
-        Self {
-            names: crate::net::audio::microphones(),
-            default: crate::net::audio::default_microphone(),
-        }
-    }
+    /// crown-voiced, as far as the Voice page's status row is concerned.
+    pub voice: Signal<VoiceState>,
 }
 
 impl Store {
@@ -85,7 +69,7 @@ impl Store {
     }
 
     /// A store of nothing but defaults, for tests that must not touch the
-    /// filesystem — or NetworkManager, or the audio host.
+    /// filesystem — or NetworkManager, or PipeWire.
     #[cfg(test)]
     pub fn defaults(runtime: &mut Runtime) -> Self {
         let config = Settings::defaults(runtime);
@@ -101,6 +85,7 @@ impl Store {
             cross_device: runtime.signal(CrossDeviceState::default()),
             plugins: runtime.signal(PluginsState::default()),
             microphones: runtime.signal(Microphones::default()),
+            voice: runtime.signal(VoiceState::default()),
         }
     }
 
@@ -108,14 +93,7 @@ impl Store {
     /// calling component lives.
     pub fn start(self, cx: &mut Cx) {
         self.config.watch(cx);
-        // ALSA enumeration takes tens of milliseconds, which would otherwise
-        // hold back the window's first frame.
-        let probe = async { tokio::task::spawn_blocking(Microphones::probe).await };
-        cx.spawn(probe, move |cx, probed| {
-            if let Ok(probed) = probed {
-                self.microphones.set(cx, probed);
-            }
-        });
+        follow_microphones(cx, self.microphones);
         wifi_worker(cx, self.wifi, move |cx, event| self.mirror_wifi(cx, event));
         wallpaper_worker(cx, self.wallpaper, move |cx, event| {
             self.mirror_wallpaper(cx, event);
@@ -123,6 +101,7 @@ impl Store {
         output_worker(cx, self.outputs);
         crownconnect_worker(cx, self.cross_device);
         plugins_worker(cx, self.plugins);
+        voice_worker(cx, self.voice);
     }
 
     // --- MARK: Config delegation ---

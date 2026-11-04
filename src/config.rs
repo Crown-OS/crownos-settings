@@ -24,7 +24,7 @@ use crownconfig::{SectionWatch, watch_section};
 use crownos_config::Key;
 use crownos_config::schema::{
     Appearance, Bluetooth, Display, Glass, Input, Keybinds, Lock, Notifications, Power, Screenshot,
-    Sound, Theme, Wifi,
+    Sound, Theme, Voice, Wifi,
 };
 use crownui::prelude::{Cx, Runtime, Signal};
 use serde::Serialize;
@@ -176,6 +176,7 @@ sections! {
     glass: Glass,
     display: Display,
     sound: Sound,
+    voice: Voice,
     input: Input,
     keybinds: Keybinds,
     notifications: Notifications,

@@ -25,6 +25,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Display",
     slug: "display",
     icon: icons::MONITOR,
+    keywords: &[],
     build,
 };
 

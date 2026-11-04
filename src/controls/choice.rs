@@ -78,6 +78,14 @@ where
     select(labels, selected)
 }
 
+/// One choice discovered at runtime: the name a key stores, and the label
+/// its row shows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamedOption {
+    pub name: String,
+    pub label: String,
+}
+
 /// A select over names discovered at runtime, bound to an `Option<String>`
 /// key whose `None` means "let the system decide".
 ///
@@ -90,7 +98,7 @@ pub fn auto_name_choice<K>(
     cx: &mut Cx,
     store: Store,
     key: K,
-    names: Signal<Vec<String>>,
+    options: Signal<Vec<NamedOption>>,
     mut automatic: impl FnMut(&mut Runtime) -> String + 'static,
 ) -> Element<SelectKind>
 where
@@ -99,9 +107,9 @@ where
 {
     let rows = derived(cx, move |runtime| {
         let automatic = automatic(runtime);
-        names.with(runtime, |names| {
+        options.with(runtime, |options| {
             std::iter::once(automatic)
-                .chain(names.iter().cloned())
+                .chain(options.iter().map(|option| option.label.clone()))
                 .collect()
         })
     });
@@ -109,15 +117,22 @@ where
         cx,
         move |runtime| {
             let current = store.get(runtime, key);
-            names.with(runtime, |names| automatic_index(current.as_deref(), names))
+            options.with(runtime, |options| {
+                automatic_index(current.as_deref(), options)
+            })
         },
         move |runtime, index: Option<usize>| {
             let chosen = match index {
                 Some(0) => None,
-                Some(index) => match names.with(runtime, |names| names.get(index - 1).cloned()) {
-                    Some(name) => Some(name),
-                    None => return,
-                },
+                Some(index) => {
+                    let name = options.with(runtime, |options| {
+                        options.get(index - 1).map(|option| option.name.clone())
+                    });
+                    match name {
+                        Some(name) => Some(name),
+                        None => return,
+                    }
+                }
                 None => return,
             };
             store.set(runtime, key, chosen);
@@ -127,12 +142,12 @@ where
 }
 
 /// Where the current choice sits in an "Automatic"-first list.
-fn automatic_index(current: Option<&str>, names: &[String]) -> Option<usize> {
+fn automatic_index(current: Option<&str>, options: &[NamedOption]) -> Option<usize> {
     match current {
         None => Some(0),
-        Some(current) => names
+        Some(current) => options
             .iter()
-            .position(|name| name == current)
+            .position(|option| option.name == current)
             .map(|index| index + 1),
     }
 }
@@ -141,11 +156,19 @@ fn automatic_index(current: Option<&str>, names: &[String]) -> Option<usize> {
 mod tests {
     use super::*;
 
+    fn option(name: &str) -> NamedOption {
+        NamedOption {
+            name: name.to_owned(),
+            label: format!("{name} microphone"),
+        }
+    }
+
     #[test]
     fn automatic_leads_and_a_missing_device_selects_nothing() {
-        let names = vec!["Yeti".to_owned(), "Webcam".to_owned()];
-        assert_eq!(automatic_index(None, &names), Some(0));
-        assert_eq!(automatic_index(Some("Webcam"), &names), Some(2));
-        assert_eq!(automatic_index(Some("Unplugged"), &names), None);
+        let options = [option("yeti"), option("webcam")];
+        assert_eq!(automatic_index(None, &options), Some(0));
+        assert_eq!(automatic_index(Some("webcam"), &options), Some(2));
+        assert_eq!(automatic_index(Some("webcam microphone"), &options), None);
+        assert_eq!(automatic_index(Some("unplugged"), &options), None);
     }
 }

@@ -23,6 +23,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Sound",
     slug: "sound",
     icon: icons::VOLUME_2,
+    keywords: &[],
     build,
 };
 

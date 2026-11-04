@@ -31,6 +31,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Keybinds",
     slug: "keybinds",
     icon: icons::KEYBOARD,
+    keywords: &[],
     build,
 };
 

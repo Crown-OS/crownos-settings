@@ -3,6 +3,7 @@
 
 use crownui::prelude::{Cx, Size};
 
+use crate::net::audio::{Microphone, Microphones};
 use crate::net::crownconnect::{
     Battery, Device, DeviceClass, DeviceId, DeviceInfo, Feature, FeatureSet, Link, LinkKind,
 };
@@ -11,12 +12,14 @@ use crate::net::plugins::{
     CapabilityInfo, Decision, EntityInfo, EntityStatus, Field, Kind, Level, Link as PluginsLink,
     LogLevel, LogLine, SelectOption, SettingValue, SettingsSection,
 };
+use crate::net::voice::VoiceService;
 use crate::net::wallpaper::{Thumbnail, WallpaperEntry};
 use crate::net::wifi::{ActiveWifi, KnownNetwork, LinkState, OtherNetwork, WifiSnapshot};
 use crate::state::Store;
 
 /// Every backend as if it had spoken: networks with a prompt open, a
-/// gallery of thumbnails, a monitor picked, a paired phone.
+/// gallery of thumbnails, a monitor picked, a paired phone, two microphones
+/// and crown-voiced enhancing on the CPU.
 pub(super) fn populate(cx: &mut Cx, store: Store) {
     store.wifi.update(cx, |wifi| {
         wifi.snapshot = Some(WifiSnapshot {
@@ -138,6 +141,32 @@ pub(super) fn populate(cx: &mut Cx, store: Store) {
         }];
     });
     populate_plugins(cx, store);
+    populate_voice(cx, store);
+}
+
+fn populate_voice(cx: &mut Cx, store: Store) {
+    let microphone = |node_name: &str, description: &str| Microphone {
+        node_name: node_name.to_owned(),
+        description: description.to_owned(),
+    };
+    store.microphones.set(
+        cx,
+        Microphones {
+            available: vec![
+                microphone(
+                    "alsa_input.pci-0000_00_1f.3.analog-stereo",
+                    "Built-in Audio",
+                ),
+                microphone("alsa_input.usb-blue-yeti", "Yeti Stereo Microphone"),
+            ],
+            default: Some("Built-in Audio".to_owned()),
+        },
+    );
+    store.voice.update(cx, |voice| {
+        voice.service = VoiceService::Running {
+            backend: Some("cpu: Ryzen 7 7840U".to_owned()),
+        };
+    });
 }
 
 fn entity(id: &str, kind: Kind, name: &str) -> EntityInfo {

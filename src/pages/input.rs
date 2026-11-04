@@ -12,11 +12,12 @@ use crownos_config::schema::input;
 use crownui::kit::{StatusOptions, Tone, icons, status};
 use crownui::prelude::{AnyView, Cx, Runtime, Semantic, bind, vstack};
 
-use crate::controls::{auto_name_choice, keybind, switch};
+use crate::controls::{NamedOption, auto_name_choice, keybind, switch};
 use crate::layout::{
     glyph, optional, setting_row_content, setting_row_desc, setting_row_icon, settings_card_titled,
     settings_divider, when,
 };
+use crate::net::audio::Microphones;
 use crate::pages::{PageDescriptor, page};
 use crate::state::Store;
 use crate::util::bridge::derived;
@@ -25,6 +26,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Input",
     slug: "input",
     icon: icons::MIC,
+    keywords: &["dictation", "microphone"],
     build,
 };
 
@@ -34,17 +36,15 @@ fn build(cx: &mut Cx, store: Store) -> AnyView {
     // should be able to see what it is about to do before it does it.
     let enabled = move |runtime: &mut Runtime| store.get(runtime, input::DictationEnabled);
     let disabled = move || bind(move |runtime| !enabled(runtime));
-    let names = derived(cx, move |runtime| {
-        store
-            .microphones
-            .with(runtime, |microphones| microphones.names.clone())
+    let options = derived(cx, move |runtime| {
+        store.microphones.with(runtime, microphone_options)
     });
 
     let microphone = auto_name_choice(
         cx,
         store,
         input::DictationMicrophone,
-        names,
+        options,
         move |runtime| {
             store.microphones.with(runtime, |microphones| {
                 automatic_label(microphones.default.as_deref())
@@ -90,7 +90,7 @@ fn build(cx: &mut Cx, store: Store) -> AnyView {
                         }
                         let chosen = store.get(runtime, input::DictationMicrophone);
                         store.microphones.with(runtime, |microphones| {
-                            missing_microphone(chosen, &microphones.names)
+                            missing_microphone(chosen, microphones)
                         })
                     },
                     |_, missing| {
@@ -117,6 +117,18 @@ fn warning(message: String) -> impl crownui::prelude::View {
     ))
 }
 
+/// Each microphone as the picker lists it: by description, stored by node name.
+fn microphone_options(microphones: &Microphones) -> Vec<NamedOption> {
+    microphones
+        .available
+        .iter()
+        .map(|microphone| NamedOption {
+            name: microphone.node_name.clone(),
+            label: microphone.description.clone(),
+        })
+        .collect()
+}
+
 /// What the "Automatic" row says, named with the device it currently resolves
 /// to — the way macOS writes "Automatic (MacBook Air Microphone)".
 fn automatic_label(default: Option<&str>) -> String {
@@ -126,12 +138,12 @@ fn automatic_label(default: Option<&str>) -> String {
     }
 }
 
-/// The configured microphone's name, if one is configured and the machine
-/// doesn't currently have it — and nothing on a machine that could not
-/// enumerate anything at all, where every name would look missing.
-fn missing_microphone(chosen: Option<String>, present: &[String]) -> Option<String> {
+/// The configured microphone's node name, if one is configured and the
+/// machine doesn't currently have it — and nothing on a machine that could
+/// not list anything at all, where every name would look missing.
+fn missing_microphone(chosen: Option<String>, present: &Microphones) -> Option<String> {
     let chosen = chosen?;
-    if present.is_empty() || present.contains(&chosen) {
+    if present.available.is_empty() || present.has(&chosen) {
         return None;
     }
     Some(chosen)
@@ -140,9 +152,31 @@ fn missing_microphone(chosen: Option<String>, present: &[String]) -> Option<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::audio::Microphone;
 
-    fn devices() -> Vec<String> {
-        vec!["Yeti".to_owned(), "Webcam".to_owned()]
+    fn devices() -> Microphones {
+        let microphone = |node_name: &str, description: &str| Microphone {
+            node_name: node_name.to_owned(),
+            description: description.to_owned(),
+        };
+        Microphones {
+            available: vec![
+                microphone("alsa_input.usb-yeti", "Yeti"),
+                microphone("alsa_input.usb-webcam", "Webcam"),
+            ],
+            default: Some("Yeti".to_owned()),
+        }
+    }
+
+    #[test]
+    fn the_picker_labels_by_description_and_stores_the_node_name() {
+        assert_eq!(
+            microphone_options(&devices())[1],
+            NamedOption {
+                name: "alsa_input.usb-webcam".to_owned(),
+                label: "Webcam".to_owned(),
+            }
+        );
     }
 
     #[test]
@@ -159,18 +193,26 @@ mod tests {
     fn only_a_configured_and_absent_microphone_is_reported_missing() {
         assert_eq!(missing_microphone(None, &devices()), None);
         assert_eq!(
-            missing_microphone(Some("Webcam".to_owned()), &devices()),
+            missing_microphone(Some("alsa_input.usb-webcam".to_owned()), &devices()),
             None,
             "it is plugged in"
         );
         assert_eq!(
-            missing_microphone(Some("Yeti Pro".to_owned()), &devices()),
-            Some("Yeti Pro".to_owned())
+            missing_microphone(Some("alsa_input.usb-yeti-pro".to_owned()), &devices()),
+            Some("alsa_input.usb-yeti-pro".to_owned())
         );
         assert_eq!(
-            missing_microphone(Some("Yeti Pro".to_owned()), &[]),
+            missing_microphone(Some("Webcam".to_owned()), &devices()),
+            Some("Webcam".to_owned()),
+            "a name stored from the old device list matches no node"
+        );
+        assert_eq!(
+            missing_microphone(
+                Some("alsa_input.usb-yeti-pro".to_owned()),
+                &Microphones::default()
+            ),
             None,
-            "a machine that enumerated nothing reports nothing missing"
+            "a machine that listed nothing reports nothing missing"
         );
     }
 }

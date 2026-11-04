@@ -15,4 +15,4 @@ jobs:
   ci:
     uses: Crown-OS/.github/.github/workflows/rust.yml@main
     with:
-      packages: alsa-lib libjpeg-turbo
+      packages: libjpeg-turbo pipewire

@@ -25,6 +25,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Cross-device",
     slug: "cross-device",
     icon: icons::MONITOR_SMARTPHONE,
+    keywords: &[],
     build,
 };
 

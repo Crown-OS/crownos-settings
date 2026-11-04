@@ -32,12 +32,14 @@
 //! crate's type — D-Bus for Wi-Fi, `crownos-ipc` for the wallpaper daemon.
 
 //! Not every fact needs that much machinery, mind: [`audio`] is a list of
-//! device names that is read once and never commanded, so it is a function
-//! rather than a worker. Its module docs say why.
+//! microphones that CrownUI's audio crate already watches and nothing ever
+//! commands, so it is a channel mirrored into a signal rather than a worker.
+//! Its module docs say why.
 
 pub mod audio;
 pub mod crownconnect;
 pub mod outputs;
 pub mod plugins;
+pub mod voice;
 pub mod wallpaper;
 pub mod wifi;

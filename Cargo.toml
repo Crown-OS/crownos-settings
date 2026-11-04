@@ -5,11 +5,10 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-# Only to enumerate microphones for the Input page — no stream is ever opened
-# here. It is `cpal` specifically because the name this app writes to
-# `input.ron` has to be one crowndictator can reopen, and crowndictator records
-# through `cpal`. Same version it uses. See `src/net/audio.rs`.
-cpal = "0.16"
+# Only to list microphones for the Input page — no stream is ever opened here.
+# CrownUI's audio crate names them by PipeWire node name, which is what
+# crowndictator opens through the same crate. See `src/net/audio.rs`.
+audio = { path = "../crownui/audio" }
 # The schema and its typed keys. The same checkout CrownUI's `crownconfig`
 # builds against, so a section read here is the type the kit's theme reads.
 crownos-config = { path = "../crownos-config", default-features = false }
@@ -26,6 +25,9 @@ crownos-ipc = { path = "../crownos-ipc", features = ["tokio"] }
 # from it. Without `daemon` it is the schema alone — none of crownpaper's
 # rendering stack is built here.
 crownpaper = { path = "../crownpaper", default-features = false }
+# crown-voiced's own declaration of its protocol, for the Voice page's status
+# row. The schema alone; the daemon's audio stack is not built here.
+voice-protocol = { package = "crownos-voice-protocol", path = "../crownos-voice/crates/voice-protocol" }
 # The crownplugind contract, for the Plugins & Themes page. The daemon is the
 # only writer of `plugins.ron`; this app asks it over IPC.
 crownplugin-proto = { path = "../crownos-plugins/proto" }

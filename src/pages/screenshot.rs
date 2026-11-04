@@ -60,6 +60,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Screenshot & Recording",
     slug: "screenshot",
     icon: icons::CAMERA,
+    keywords: &[],
     build,
 };
 
