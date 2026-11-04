@@ -25,7 +25,7 @@ pub fn card(cx: &mut Cx, wifi: Signal<WifiState>) -> impl View + use<> {
             listed(
                 wifi.snapshot
                     .iter()
-                    .flat_map(|snapshot| snapshot.known.iter().cloned()),
+                    .flat_map(|snapshot| snapshot.known_inactive().cloned()),
             )
         })
     });

@@ -14,4 +14,4 @@ jobs:
     uses: Crown-OS/.github/.github/workflows/arch-package.yml@main
     secrets: inherit
     with:
-      packages: alsa-lib
+      packages: alsa-lib libjpeg-turbo

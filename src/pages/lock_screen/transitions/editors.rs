@@ -1,12 +1,12 @@
 //! A switch per kind of effect, and its parameters while it is on.
 
-use crownui::kit::{SliderOptions, slider, toggle};
-use crownui::prelude::{AnyView, Cx, Semantic, Styled, View, bind, vstack};
+use crownui::kit::toggle;
+use crownui::prelude::{AnyView, Cx, Semantic, Styled, View, vstack};
 
 use super::effects::{EDGES, EffectKind, Param};
-use super::{edit, read, with_readout};
-use crate::controls::field_choice;
-use crate::layout::{setting_row, setting_row_desc, settings_divider, value_text, when};
+use super::{edit, read};
+use crate::controls::{apart, field_choice, segments};
+use crate::layout::{setting_row, setting_row_desc, settings_divider, when};
 use crate::pages::lock_screen::moment::Moment;
 use crate::state::Store;
 use crate::util::bridge::bridge;
@@ -88,34 +88,21 @@ fn param_row(
     match *param {
         Param::Amount {
             label,
-            shown,
-            step,
-            unit,
-            shown_per_stored,
+            stops,
             read,
             write,
-        } => {
-            let value = bridge(
+        } => setting_row(
+            label,
+            segments(
                 cx,
-                move |runtime| read(&current(runtime)).unwrap_or_default() * shown_per_stored,
-                move |runtime, value: f32| {
-                    edit_effect(runtime, &|effect| write(effect, value / shown_per_stored));
-                },
-            );
-            setting_row(
-                label,
-                with_readout(
-                    slider(value)
-                        .range(shown.0, shown.1)
-                        .step(step)
-                        .label(label),
-                    value_text(bind(move |runtime| {
-                        format!("{} {unit}", value.get(runtime).round())
-                    })),
-                ),
+                stops,
+                apart,
+                move |runtime| read(&current(runtime)).unwrap_or_default(),
+                move |runtime, value| edit_effect(runtime, &|effect| write(effect, value)),
             )
-            .boxed()
-        }
+            .label(label),
+        )
+        .boxed(),
         Param::Edge { label, read, write } => setting_row(
             label,
             field_choice(

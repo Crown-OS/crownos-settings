@@ -3,7 +3,10 @@
 #[cfg(test)]
 mod fixtures;
 mod navigation;
+#[cfg(test)]
+mod profile;
 mod root;
+mod search;
 #[cfg(test)]
 mod tests;
 mod theme;

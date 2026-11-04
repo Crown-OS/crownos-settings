@@ -56,6 +56,7 @@ impl State {
                     texture.free(cx);
                 }
             }
+            StudioEvent::Thumbnails(shelf, pictures) => self.shelve(cx, shelf, pictures),
             StudioEvent::PictureUnreadable(unreadable) => {
                 if self
                     .unreadable

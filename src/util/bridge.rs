@@ -27,7 +27,7 @@ pub fn bridge<T: Clone + PartialEq + 'static>(
     cx.effect(move |runtime| {
         let value = local.get(runtime);
         if known.with(runtime, |known| *known != value) {
-            write(runtime, value);
+            runtime.untrack(|runtime| write(runtime, value));
         }
     });
     local

@@ -1,21 +1,16 @@
-use crownui::kit::{sidebar, slide_transition, use_theme};
-use crownui::prelude::{Curve, Cx, Styled, View, component, vstack, zstack};
+use crownui::kit::{sidebar_with_header, slide_transition, title_bar_spacer, window_controls};
+use crownui::prelude::{Cx, Styled, View, component, hstack};
 
 use super::Navigation;
+use super::search::page_search;
 use super::theme::{provide_app_theme, provide_app_window_radius};
 use crate::pages;
 use crate::sidebar::sidebar_menus;
 use crate::state::Store;
-use crate::util::theme::{tint, with_translucency_factor};
 
-/// The kit's palette cross-fade, so the window backdrop changes with the cards.
-const THEME_FADE_MILLIS: u64 = 240;
-/// How much of the surface's translucency the backdrop behind the sidebar and
-/// toolbar keeps; the content card paints the surface as it is.
-const CHROME_TRANSLUCENCY: f32 = 0.5;
-
-/// Sidebar on the left, the current page sliding in the content pane on the
-/// right, over a backdrop in the theme's surface color.
+/// Sidebar on the left and, above the content pane with the current page
+/// sliding in it, the window's own title bar: the page search centered between
+/// two equal drag areas, the trailing one ending in the window controls.
 ///
 /// The store, the theme, the config watchers and every backend live in this
 /// component's scope, so they last exactly as long as the window.
@@ -41,21 +36,15 @@ pub fn root(plugin: Option<String>, page: Option<usize>) -> impl View {
 /// Everything the window draws, over whatever store and theme it is given,
 /// opened on the page at `ordinal`.
 pub(super) fn shell(cx: &mut Cx, store: Store, ordinal: usize) -> impl View + use<> {
-    let theme = use_theme(cx);
     let navigation = Navigation::new(cx, store, ordinal);
 
     let content = slide_transition(navigation.current(), move |cx, ordinal| {
         pages::build(cx, store, ordinal)
     })
     .flex_1();
-    let backdrop = vstack(())
-        .w_full()
-        .h_full()
-        .bg(tint(theme, |theme| {
-            with_translucency_factor(theme.surface.bg, CHROME_TRANSLUCENCY)
-        }))
-        .transition(Curve::ease_in_out(THEME_FADE_MILLIS));
 
     let menus = sidebar_menus(cx, navigation, store);
-    zstack((backdrop, sidebar(menus, content)))
+    let search = page_search(cx, navigation, store);
+    let controls = hstack((title_bar_spacer(), window_controls())).flex_1();
+    sidebar_with_header(menus, (title_bar_spacer(), search, controls), content)
 }

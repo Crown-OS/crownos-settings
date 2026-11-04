@@ -1,7 +1,9 @@
 //! The wallpaper grid: bento sections of clickable thumbnails.
 
 use crownos_config::schema::appearance;
-use crownui::kit::{StatusOptions, Tone, spinner, status, use_theme};
+use crownui::kit::{
+    CARD_BORDER_WIDTH, CARD_RADIUS, StatusOptions, Tone, spinner, status, use_theme,
+};
 use crownui::prelude::{
     AnyView, CursorIcon, Listeners, Role, Semantic, Styled, TRANSPARENT, View, bind, component,
     cover_image, hstack, keyed, vstack,
@@ -20,20 +22,23 @@ use crate::util::theme::tint;
 /// takes. Columns are not fixed the same way — a section divides whatever
 /// width it is given into [`bento::COLUMNS`] of them.
 const CELL_HEIGHT: f32 = 33.0;
-/// The gap the eye sees between two thumbnails, in both directions and
-/// between blocks.
-const TILE_GAP: f32 = 14.0;
+/// The gap the eye sees between two thumbnails, in both directions, between
+/// blocks and between the outer thumbnails and the card's border.
+const TILE_GAP: f32 = 8.0;
 /// The selection ring: an accent border floated just off the thumbnail,
 /// macOS-picker style, so choosing never occludes the image.
 const RING_WIDTH: f32 = 2.0;
-const RING_RADIUS: f32 = 12.0;
+/// The grid's inset from the card's border: with the ring's own inset it
+/// makes up [`TILE_GAP`].
+const GRID_PADDING: f32 = TILE_GAP - RING_INSET;
+const RING_RADIUS: f32 = CARD_RADIUS - CARD_BORDER_WIDTH - GRID_PADDING;
 /// Breathing room between the ring and the thumbnail it crowns.
-const RING_GAP: f32 = 3.0;
-/// The thumbnail's own corners, inside the ring's.
-const IMAGE_RADIUS: f32 = RING_RADIUS - RING_GAP;
+const RING_GAP: f32 = 2.0;
 /// How far inside its cell the ring holds the thumbnail. Reserved on every
 /// tile, selected or not, so a pick never resizes anything.
 const RING_INSET: f32 = RING_GAP + RING_WIDTH;
+/// The thumbnail's own corners, concentric with the ring's.
+const IMAGE_RADIUS: f32 = RING_RADIUS - RING_INSET;
 /// What the layout is told, so that what the eye sees is [`TILE_GAP`]: the
 /// ring reserves [`RING_INSET`] on each of the two tiles either side of a gap.
 const CELL_GAP: f32 = TILE_GAP - 2.0 * RING_INSET;
@@ -81,10 +86,11 @@ pub fn gallery(store: Store) -> impl View {
                     .tone(Tone::Neutral),
             )
             .boxed(),
-            Shape::Tiles(paths) => {
-                setting_row_content(vstack(sections(store, &paths)).gap(CELL_GAP).self_stretch())
-                    .boxed()
-            }
+            Shape::Tiles(paths) => vstack(sections(store, &paths))
+                .gap(CELL_GAP)
+                .p(GRID_PADDING)
+                .self_stretch()
+                .boxed(),
         },
     )
 }

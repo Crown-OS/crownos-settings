@@ -16,6 +16,7 @@
 mod choice;
 mod keybind;
 mod options;
+mod segments;
 mod slider;
 mod switch;
 mod text;
@@ -23,6 +24,7 @@ mod text;
 pub use choice::{auto_name_choice, choice, field_choice, name_choice};
 pub use keybind::keybind;
 pub use options::Options;
+pub use segments::{apart, exact, segments};
 pub use slider::{fraction_slider, percent_slider};
 pub use switch::switch;
 pub use text::field_text;

@@ -11,8 +11,9 @@
 //! window is open and can be asked to act on it. This one is neither. There is
 //! nothing to command — the Input page picks a name and writes it to a file —
 //! and enumerating devices is a handful of synchronous calls into the audio
-//! host that finish in single-digit milliseconds. Spending a task, a channel and
-//! an event enum on that would be machinery standing in for a function call.
+//! host. They take tens of milliseconds under ALSA, so the store makes them
+//! once on the blocking pool; a channel and an event enum on top of that would
+//! be machinery standing in for a function call.
 //!
 //! The cost is that a microphone plugged in while the window is open does not
 //! appear until it is reopened. That is the honest trade for now; when it starts

@@ -1,4 +1,5 @@
-//! How the clock reads: its style, where it sits, its formats and font.
+//! How the clock reads: the face it wears, its size, where it sits, its
+//! formats and font.
 
 use crownos_config::Key;
 use crownos_config::schema::lock::{ClockStyleKey, DateFormat, Font, Layout, TimeFormat};
@@ -8,7 +9,9 @@ use crownui::prelude::{Cx, Runtime, Semantic, View, vstack};
 use lockscreen::clock::ClockFace;
 
 use super::clock_look::look_rows;
-use crate::controls::{Options, choice, field_text};
+use super::looks::faces;
+use super::preview::Preview;
+use crate::controls::{Options, exact, field_text, segments};
 use crate::layout::{setting_row, setting_row_desc, settings_card_titled, settings_divider, when};
 use crate::state::Store;
 use crate::util::bridge::bridge;
@@ -16,9 +19,9 @@ use crate::util::bridge::bridge;
 const TEXT_WIDTH: f32 = 220.0;
 
 static STYLES: Options<ClockStyle> = Options::new(&[
-    ("Classic", ClockStyle::Classic),
+    ("Small", ClockStyle::Minimal),
+    ("Regular", ClockStyle::Classic),
     ("Large", ClockStyle::Large),
-    ("Minimal", ClockStyle::Minimal),
 ]);
 
 static LAYOUTS: Options<LockLayout> = Options::new(&[
@@ -43,16 +46,39 @@ const DATE_FORMATS: &[Format] = &[
     ("ISO", "%Y-%m-%d"),
 ];
 
-pub fn clock_card(cx: &mut Cx, store: Store) -> impl View + use<> {
+pub fn clock_card(cx: &mut Cx, store: Store, preview: &Preview) -> impl View + use<> {
     let font_placeholder =
         cx.untrack(|runtime| store.section(runtime, |theme: &Theme| theme.font.family.clone()));
     settings_card_titled(
         "Clock",
         (
-            setting_row("Style", choice(cx, store, ClockStyleKey, &STYLES)),
+            faces(store, preview),
+            settings_divider(),
+            setting_row_desc(
+                "Size",
+                "Small leaves the date out",
+                segments(
+                    cx,
+                    &STYLES,
+                    exact,
+                    move |runtime| store.get(runtime, ClockStyleKey),
+                    move |runtime, style| store.set(runtime, ClockStyleKey, style),
+                )
+                .label("Size"),
+            ),
             look_rows(cx, store),
             settings_divider(),
-            setting_row("Layout", choice(cx, store, Layout, &LAYOUTS)),
+            setting_row(
+                "Layout",
+                segments(
+                    cx,
+                    &LAYOUTS,
+                    exact,
+                    move |runtime| store.get(runtime, Layout),
+                    move |runtime, layout| store.set(runtime, Layout, layout),
+                )
+                .label("Layout"),
+            ),
             settings_divider(),
             format_rows(cx, store, TimeFormat, "Time", TIME_FORMATS, |face| {
                 face.time
@@ -64,7 +90,7 @@ pub fn clock_card(cx: &mut Cx, store: Store) -> impl View + use<> {
             settings_divider(),
             setting_row_desc(
                 "Font",
-                "A font family installed on this computer; empty keeps the theme's",
+                "For the Theme font faces: a family installed on this computer, or empty for the theme's",
                 field_text(
                     cx,
                     move |runtime| store.get(runtime, Font).unwrap_or_default(),

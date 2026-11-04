@@ -89,6 +89,29 @@ fn joining_a_secured_network_asks_for_a_password_first() {
     assert!(!app.exists(field()), "submitting closes the prompt");
 }
 
+#[test]
+fn searching_opens_the_picked_page_and_clears_the_bar() {
+    let mut app = window(pages::DEFAULT_PAGE, false);
+    let bar = || role(Role::SearchField).name("Search settings");
+    app.click(bar());
+    press(&mut app, "lock");
+    app.settle();
+    app.click(role(Role::ListItem).name("Lock Screen"));
+    app.settle();
+    assert!(app.exists(role(Role::ScrollView).name("Lock Screen")));
+    assert_eq!(app.find(bar()).value.as_deref(), Some(""));
+}
+
+#[test]
+fn enter_opens_the_first_match() {
+    let mut app = window(pages::DEFAULT_PAGE, false);
+    app.click(role(Role::SearchField));
+    press(&mut app, "battery");
+    app.press_key("Enter");
+    app.settle();
+    assert!(app.exists(role(Role::ScrollView).name("Battery & Power")));
+}
+
 fn press(app: &mut TestApp, keys: &str) {
     for key in keys.chars() {
         app.press_key(&key.to_string());
@@ -215,8 +238,12 @@ fn render_every_page() {
         return;
     };
     let size = Size::new(WIDTH, 1400.0);
-    let shots =
-        (0..pages::all_pages().count()).flat_map(|ordinal| [(ordinal, false), (ordinal, true)]);
+    let only = std::env::var("CROWNSETTINGS_RENDER_PAGE")
+        .ok()
+        .map(|title| ordinal_of(&title));
+    let shots = (0..pages::all_pages().count())
+        .filter(|ordinal| only.is_none_or(|only| only == *ordinal))
+        .flat_map(|ordinal| [(ordinal, false), (ordinal, true)]);
     for (ordinal, live) in shots {
         let surface = Offscreen {
             width: size.width as u32,

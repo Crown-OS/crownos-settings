@@ -1,6 +1,7 @@
 use crownui::prelude::{Cx, Signal};
 
 use crate::net::wallpaper::WallpaperState;
+use crate::net::wifi::WifiState;
 use crate::pages;
 use crate::state::Store;
 
@@ -9,6 +10,7 @@ use crate::state::Store;
 pub struct Navigation {
     page: Signal<usize>,
     wallpaper: Signal<WallpaperState>,
+    wifi: Signal<WifiState>,
 }
 
 impl Navigation {
@@ -18,7 +20,9 @@ impl Navigation {
         let navigation = Self {
             page: cx.signal(ordinal),
             wallpaper: store.wallpaper,
+            wifi: store.wifi,
         };
+        navigation.show_networks(cx, pages::shows_networks(ordinal));
         if pages::shows_wallpapers(ordinal) {
             navigation.wallpaper.update(cx, WallpaperState::enter);
         }
@@ -41,6 +45,10 @@ impl Navigation {
             return;
         }
         self.page.set(cx, ordinal);
+        let networks = pages::shows_networks(ordinal);
+        if pages::shows_networks(previous) != networks {
+            self.show_networks(cx, networks);
+        }
         match (
             pages::shows_wallpapers(previous),
             pages::shows_wallpapers(ordinal),
@@ -56,5 +64,9 @@ impl Navigation {
             }
             _ => {}
         }
+    }
+
+    fn show_networks(self, cx: &mut Cx, shown: bool) {
+        self.wifi.with_untracked(cx, |wifi| wifi.set_shown(shown));
     }
 }

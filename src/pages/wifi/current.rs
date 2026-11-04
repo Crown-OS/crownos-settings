@@ -37,8 +37,7 @@ pub fn card(_cx: &mut Cx, wifi: Signal<WifiState>, ssid: String) -> impl View + 
                     status("Connecting…").tone(Tone::Neutral),
                 ))
                 .boxed(),
-                Some(LinkState::Connected) => status("Connected").tone(Tone::Success).boxed(),
-                None => vstack(()).boxed(),
+                Some(LinkState::Connected) | None => vstack(()).boxed(),
             },
         ),
         button(bind(move |runtime| {

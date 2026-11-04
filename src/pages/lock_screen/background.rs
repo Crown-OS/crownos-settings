@@ -12,7 +12,7 @@ use crownui::prelude::{
 use lockscreen::palette::Palette;
 
 use super::preview::Preview;
-use crate::controls::{Options, field_choice, field_text, fraction_slider};
+use crate::controls::{Options, apart, field_choice, field_text, segments};
 use crate::layout::{
     inline, nothing, optional, setting_row, setting_row_content, setting_row_desc,
     settings_card_titled, settings_divider,
@@ -33,6 +33,15 @@ enum Source {
     Picture,
     Color,
 }
+
+static DIMS: Options<f32> = Options::new(&[
+    ("None", 0.0),
+    ("Light", 0.15),
+    ("Medium", 0.3),
+    ("Dark", 0.5),
+]);
+
+static BLURS: Options<f32> = Options::new(&[("None", 0.0), ("Soft", 0.5), ("Full", 1.0)]);
 
 static SOURCES: Options<Source> = Options::new(&[
     ("Desktop wallpaper", Source::Desktop),
@@ -79,13 +88,27 @@ pub fn background_card(cx: &mut Cx, store: Store, preview: &Preview) -> impl Vie
             setting_row_desc(
                 "Dim",
                 "How much darker the background gets",
-                fraction_slider(cx, store, Dim),
+                segments(
+                    cx,
+                    &DIMS,
+                    apart,
+                    move |runtime| store.get(runtime, Dim),
+                    move |runtime, dim| store.set(runtime, Dim, dim),
+                )
+                .label("Dim"),
             ),
             settings_divider(),
             setting_row_desc(
                 "Blur",
                 "As a share of the desktop's own blur",
-                fraction_slider(cx, store, BlurKey),
+                segments(
+                    cx,
+                    &BLURS,
+                    apart,
+                    move |runtime| store.get(runtime, BlurKey),
+                    move |runtime, blur| store.set(runtime, BlurKey, blur),
+                )
+                .label("Blur"),
             ),
         ),
     )
