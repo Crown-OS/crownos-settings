@@ -53,6 +53,9 @@ image = { version = "0.25", default-features = false, features = [
   "webp",
   "bmp",
 ] }
+# Thumbnail JPEGs decoded at 1/8–7/8 size inside the IDCT, with SIMD — the
+# same libjpeg-turbo binding and version crownpaper decodes wallpapers with.
+turbojpeg = { version = "1.5", default-features = false, features = ["pkg-config"] }
 # The Wi-Fi backend. Talks to NetworkManager over D-Bus and never leaves
 # `src/net`.
 nmrs = "3.4.2"
@@ -86,6 +89,8 @@ wayland-protocols-wlr = { version = "0.3", default-features = false, features = 
 crowntest = { path = "../crownui/crowntest" }
 # Offscreen Impeller renders of every page, for looking at (an ignored test).
 impeller = { path = "../crownui/impeller", features = ["static"] }
+# The actions the frame profile drives the window with.
+semantics = { path = "../crownui/semantics" }
 taffy-layout = { path = "../crownui/taffy-layout" }
 
 # crownconnect-linux names crownos-ipc by its git URL, crownpaper by its path:

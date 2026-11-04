@@ -17,7 +17,7 @@ use crate::pages::{GROUPS, PluginPage, plugin_ordinal, plugin_pages};
 use crate::state::Store;
 use crate::util::bridge::derived;
 
-const PLUGINS_LABEL: &str = "Plugins";
+pub const PLUGINS_LABEL: &str = "Plugins";
 
 /// One labelled section per registry group, then the Plugins group.
 pub fn sidebar_menus(cx: &mut Cx, navigation: Navigation, store: Store) -> Vec<AnyView> {

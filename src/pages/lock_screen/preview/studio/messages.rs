@@ -5,6 +5,7 @@ use lockscreen::layout::{Layer, Part, Rect};
 use lockscreen::lockscene::LockScene;
 use lockscreen::tiny_skia::Pixmap;
 
+use super::thumbnails::{Shelf, ThumbnailRequest};
 use crate::util::pixmap::straight_rgba;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +36,7 @@ pub struct BackdropRequest {
 pub enum StudioCommand {
     Layout(Box<LayoutRequest>),
     Backdrop(BackdropRequest),
+    Thumbnails(Box<ThumbnailRequest>),
 }
 
 /// One rasterised piece of the layout, premultiplied, at the request's scale.
@@ -96,4 +98,6 @@ pub enum StudioEvent {
     },
     Picture(Slot, Option<Picture>),
     PictureUnreadable(bool),
+    /// One picture per scene asked for, `None` where nothing could be drawn.
+    Thumbnails(Shelf, Vec<Option<Picture>>),
 }

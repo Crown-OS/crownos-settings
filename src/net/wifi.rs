@@ -80,6 +80,7 @@ use nmrs::models::{
 };
 use nmrs::{ConnectionError, NetworkManager};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tokio::time::{Instant, sleep_until};
 
@@ -93,6 +94,13 @@ use crate::util::worker::{MessageProxy, spawn_worker};
 /// collapsing. Long enough to swallow a burst, short enough that clicking
 /// "Wi-Fi off" still feels immediate.
 const REFRESH_DEBOUNCE: Duration = Duration::from_millis(350);
+
+/// The same window for access points coming, going and changing strength.
+///
+/// Each re-read builds a proxy per access point and fetches every saved
+/// profile — hundreds of D-Bus messages — and a signal bar or a new row in
+/// the list a moment late is invisible, where a radio switch is not.
+const SCAN_DEBOUNCE: Duration = Duration::from_secs(2);
 
 /// How long to wait before re-subscribing to a change stream that went away.
 ///
@@ -292,6 +300,14 @@ pub struct OtherNetwork {
 }
 
 impl WifiSnapshot {
+    /// The saved networks in range, minus the one this machine is on.
+    pub fn known_inactive(&self) -> impl Iterator<Item = &KnownNetwork> {
+        let active = self.connection.as_ref().map(|active| active.ssid.as_str());
+        self.known
+            .iter()
+            .filter(move |network| Some(network.ssid.as_str()) != active)
+    }
+
     /// Whether joining `ssid` needs a key, as far as this snapshot knows.
     ///
     /// `None` means the SSID isn't in this snapshot at all — a hidden network,
@@ -336,6 +352,9 @@ impl WifiSnapshot {
 pub struct WifiState {
     /// Set once, when [`wifi_worker`] is first built.
     sender: Option<UnboundedSender<WifiCommand>>,
+    /// Whether the Wi-Fi page is on screen: the only time access points
+    /// coming, going and changing strength are worth a re-read.
+    shown: watch::Sender<bool>,
     /// The last snapshot, or `None` before the first one lands — which the page
     /// draws as "looking for networks…".
     pub snapshot: Option<WifiSnapshot>,
@@ -381,6 +400,11 @@ impl WifiState {
         }
     }
 
+    /// Tell the worker whether the network lists are on screen.
+    pub fn set_shown(&self, shown: bool) {
+        self.shown.send_replace(shown);
+    }
+
     /// Whether a worker is attached — i.e. whether commands go anywhere.
     #[must_use]
     pub fn is_live(&self) -> bool {
@@ -390,6 +414,14 @@ impl WifiState {
     /// Clear the last error, for the page's dismiss affordance.
     pub fn dismiss_error(&mut self) {
         self.error = None;
+    }
+
+    /// Whether folding in `snapshot` would change nothing at all: the same
+    /// world, with no join waiting on it and no outage for it to end.
+    fn repeats(&self, snapshot: &WifiSnapshot) -> bool {
+        self.connecting.is_none()
+            && self.unavailable.is_none()
+            && self.snapshot.as_ref() == Some(snapshot)
     }
 
     /// Adopt the sending half of the command channel. Called once, at build.
@@ -459,7 +491,14 @@ pub fn wifi_worker(
     wifi: Signal<WifiState>,
     mut on_event: impl FnMut(&mut Cx, &WifiEvent) + 'static,
 ) {
-    let sender = spawn_worker(cx, run, move |cx, event| {
+    let shown = wifi.with_untracked(cx, |wifi| wifi.shown.subscribe());
+    let worker = move |proxy, commands| run(proxy, commands, shown);
+    let sender = spawn_worker(cx, worker, move |cx, event| {
+        if let WifiEvent::Snapshot(snapshot) = &event
+            && wifi.with_untracked(cx, |wifi| wifi.repeats(snapshot))
+        {
+            return;
+        }
         on_event(cx, &event);
         wifi.update(cx, |wifi| wifi.apply(event));
     });
@@ -485,7 +524,11 @@ pub fn wifi_worker(
 /// comes with a `resubscribe_at`. That is what the pre-fix code got wrong: a
 /// failed subscription left nothing armed, and a `select!` whose only live arm
 /// is `commands.recv()` is a worker that has stopped watching the network.
-async fn run(proxy: MessageProxy<WifiEvent>, mut commands: UnboundedReceiver<WifiCommand>) {
+async fn run(
+    proxy: MessageProxy<WifiEvent>,
+    mut commands: UnboundedReceiver<WifiCommand>,
+    mut shown: watch::Receiver<bool>,
+) {
     let manager = match NetworkManager::new().await {
         Ok(manager) => manager,
         Err(error) => {
@@ -508,6 +551,8 @@ async fn run(proxy: MessageProxy<WifiEvent>, mut commands: UnboundedReceiver<Wif
     let mut resubscribe_at: Option<Instant> = Some(Instant::now());
     // Commands in flight. Reaped by the loop, aborted with the window.
     let mut running: JoinSet<()> = JoinSet::new();
+    // Access points changed while nobody was looking at them.
+    let mut stale = false;
 
     loop {
         // Opened here rather than in a branch handler because every path that
@@ -543,11 +588,12 @@ async fn run(proxy: MessageProxy<WifiEvent>, mut commands: UnboundedReceiver<Wif
                 // loop, which is where this arm goes next.
                 if refresh_at.is_some_and(|due| due <= Instant::now()) {
                     refresh_at = None;
+                    stale = false;
                     latest = publish(&manager, &proxy).await;
                 }
             }
             signal = next_signal(&mut events) => {
-                match signal {
+                let debounce = match signal {
                     // NetworkManager went away and came back: every object path
                     // we were watching is stale, so the stream is rebuilt from
                     // scratch — after a pause, because a daemon that is still
@@ -555,16 +601,31 @@ async fn run(proxy: MessageProxy<WifiEvent>, mut commands: UnboundedReceiver<Wif
                     Some(Ok(NetworkEvent::NetworkManagerRestarted)) | None => {
                         events = None;
                         resubscribe_at = Some(Instant::now() + RESUBSCRIBE_DELAY);
+                        Some(REFRESH_DEBOUNCE)
                     }
-                    Some(Ok(_)) => {}
+                    // Nobody is looking at the lists: catch up when somebody is.
+                    Some(Ok(NetworkEvent::AccessPointsChanged)) if !*shown.borrow() => {
+                        stale = true;
+                        None
+                    }
+                    Some(Ok(NetworkEvent::AccessPointsChanged)) => Some(SCAN_DEBOUNCE),
+                    Some(Ok(_)) => Some(REFRESH_DEBOUNCE),
                     Some(Err(error)) => {
                         let _ = proxy.message(WifiEvent::Error(error.to_string()));
+                        Some(REFRESH_DEBOUNCE)
                     }
-                }
+                };
                 // Leading-edge debounce: the first signal of a burst fixes the
                 // deadline, later ones ride along, so a chatty radio can delay
                 // a refresh but never postpone it indefinitely.
-                schedule(&mut refresh_at, Instant::now() + REFRESH_DEBOUNCE);
+                if let Some(debounce) = debounce {
+                    schedule(&mut refresh_at, Instant::now() + debounce);
+                }
+            }
+            Ok(()) = shown.changed() => {
+                if *shown.borrow_and_update() && stale {
+                    schedule(&mut refresh_at, Instant::now());
+                }
             }
             command = commands.recv() => {
                 let Some(command) = command else {
@@ -1551,6 +1612,20 @@ mod tests {
 
         state.dismiss_error();
         assert!(state.error.is_none());
+    }
+
+    #[test]
+    fn only_a_snapshot_that_changes_nothing_is_a_repeat() {
+        let mut state = WifiState::default();
+        let snapshot = WifiSnapshot::default();
+        assert!(
+            !state.repeats(&snapshot),
+            "the first snapshot ends the search"
+        );
+        state.apply(WifiEvent::Snapshot(snapshot.clone()));
+        assert!(state.repeats(&snapshot));
+        state.apply(WifiEvent::Connecting("Workshop".to_owned()));
+        assert!(!state.repeats(&snapshot), "a join is waiting on the world");
     }
 
     #[test]

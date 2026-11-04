@@ -139,7 +139,7 @@ fn build(_cx: &mut Cx, store: Store) -> AnyView {
                             && state
                                 .snapshot
                                 .as_ref()
-                                .is_some_and(|snapshot| !snapshot.known.is_empty())
+                                .is_some_and(|snapshot| snapshot.known_inactive().next().is_some())
                     })
                 },
                 move |cx| known::card(cx, wifi),

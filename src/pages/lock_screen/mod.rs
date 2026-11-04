@@ -5,6 +5,7 @@ mod background;
 mod behaviour;
 mod clock;
 mod clock_look;
+mod looks;
 mod moment;
 mod preview;
 mod prompt;
@@ -31,7 +32,8 @@ fn build(cx: &mut Cx, store: Store) -> AnyView {
         &PAGE,
         (
             preview.card(cx),
-            clock::clock_card(cx, store),
+            looks::looks_card(store, &preview),
+            clock::clock_card(cx, store, &preview),
             background::background_card(cx, store, &preview),
             prompt::prompt_card(cx, store),
             Moment::ALL

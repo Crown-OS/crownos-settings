@@ -16,13 +16,10 @@ pub struct EffectKind {
 }
 
 pub enum Param {
-    /// A number, shown as the stored value times `shown_per_stored`.
+    /// A number, picked from named stops.
     Amount {
         label: &'static str,
-        shown: (f32, f32),
-        step: f32,
-        unit: &'static str,
-        shown_per_stored: f32,
+        stops: &'static Options<f32>,
         read: fn(&Effect) -> Option<f32>,
         write: fn(&mut Effect, f32),
     },
@@ -40,6 +37,18 @@ pub static EDGES: Options<Edge> = Options::new(&[
     ("The right", Edge::Right),
 ]);
 
+static BLUR_RADII: Options<f32> =
+    Options::new(&[("Soft", 12.0), ("Medium", 24.0), ("Strong", 48.0)]);
+
+static SLIDE_DISTANCES: Options<f32> =
+    Options::new(&[("Short", 20.0), ("Medium", 40.0), ("Long", 120.0)]);
+
+static ZOOM_STARTS: Options<f32> = Options::new(&[
+    ("Slightly smaller", 0.94),
+    ("Smaller", 0.8),
+    ("Larger", 1.1),
+]);
+
 pub static EFFECTS: &[EffectKind] = &[
     EffectKind {
         name: "Fade",
@@ -53,10 +62,7 @@ pub static EFFECTS: &[EffectKind] = &[
         default: Effect::Blur { radius: 24.0 },
         params: &[Param::Amount {
             label: "Blur radius",
-            shown: (0.0, 64.0),
-            step: 1.0,
-            unit: "px",
-            shown_per_stored: 1.0,
+            stops: &BLUR_RADII,
             read: |effect| match effect {
                 Effect::Blur { radius } => Some(*radius),
                 _ => None,
@@ -90,10 +96,7 @@ pub static EFFECTS: &[EffectKind] = &[
             },
             Param::Amount {
                 label: "Distance",
-                shown: (0.0, 600.0),
-                step: 1.0,
-                unit: "px",
-                shown_per_stored: 1.0,
+                stops: &SLIDE_DISTANCES,
                 read: |effect| match effect {
                     Effect::Slide { distance, .. } => Some(*distance),
                     _ => None,
@@ -112,10 +115,7 @@ pub static EFFECTS: &[EffectKind] = &[
         default: Effect::Zoom { from: 0.94 },
         params: &[Param::Amount {
             label: "Starting size",
-            shown: (50.0, 150.0),
-            step: 1.0,
-            unit: "%",
-            shown_per_stored: 100.0,
+            stops: &ZOOM_STARTS,
             read: |effect| match effect {
                 Effect::Zoom { from } => Some(*from),
                 _ => None,

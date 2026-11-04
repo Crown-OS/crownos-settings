@@ -1,17 +1,19 @@
-//! How the clock's digits look: their arrangement, weight, height and glass,
-//! the shadow under them and the cut-out standing in front of them.
+//! How the clock's digits look: their height, weight, light and bend, the
+//! glass and shadow they are drawn with and the cut-out in front of them —
+//! each a few named choices.
 
 use std::path::Path;
 
 use crownos_config::schema::lock::ClockKey;
-use crownos_config::schema::{ClockArrangement, ClockFrame, ClockLook, Lock};
+use crownos_config::schema::{ClockFrame, ClockLighting, ClockLook, Lock};
 use crownui::kit::{
-    ButtonOptions, ButtonSize, SliderKind, SliderOptions, StatusOptions, TextInputOptions, Tone,
-    button, slider, status, toggle,
+    ButtonOptions, ButtonSize, StatusOptions, TextInputOptions, ToggleGroupKind, Tone, button,
+    status, toggle,
 };
 use crownui::prelude::{Cx, Element, Listeners, Runtime, Semantic, Signal, View, vstack};
 
-use crate::controls::{Options, field_choice, field_text};
+use super::looks::{WARPS, Warp};
+use crate::controls::{Options, apart, exact, field_text, segments};
 use crate::layout::{
     optional, setting_row, setting_row_content, setting_row_desc, settings_divider,
 };
@@ -20,52 +22,77 @@ use crate::util::bridge::bridge;
 use crate::util::home::expand_home;
 
 const PATH_WIDTH: f32 = 280.0;
-/// Every slider shows 0 to 100, whatever it stands for.
-const SHOWN: f32 = 100.0;
-const WEIGHT_STEP: u16 = 100;
-/// The weight a clock style leaves unchanged reads as this on the slider.
-const STYLE_WEIGHT: u16 = 400;
 
-static ARRANGEMENTS: Options<ClockArrangement> = Options::new(&[
-    ("Side by side", ClockArrangement::Row),
-    ("Hours over minutes", ClockArrangement::Stacked),
+static HEIGHTS: Options<f32> = Options::new(&[
+    ("Regular", 1.0),
+    ("Tall", 1.6),
+    ("Taller", 2.2),
+    ("Tallest", 2.8),
 ]);
 
+static WEIGHTS: Options<Option<u16>> = Options::new(&[
+    ("Auto", None),
+    ("Thin", Some(200)),
+    ("Light", Some(300)),
+    ("Regular", Some(400)),
+    ("Bold", Some(700)),
+]);
+
+static LIGHTING: Options<ClockLighting> = Options::new(&[
+    ("None", ClockLighting::None),
+    ("Glow", ClockLighting::Glow),
+    ("Sheen", ClockLighting::Sheen),
+]);
+
+static SHADOWS: Options<f32> = Options::new(&[("None", 0.0), ("Soft", 0.35), ("Strong", 0.8)]);
+
 pub fn look_rows(cx: &mut Cx, store: Store) -> impl View + use<> {
-    let weight = look_value(
+    let height = look_choice(
         cx,
         store,
-        |look| {
-            let weight = look.weight.unwrap_or(STYLE_WEIGHT);
-            f32::from(weight - ClockLook::MIN_WEIGHT)
-                / f32::from(ClockLook::MAX_WEIGHT - ClockLook::MIN_WEIGHT)
-                * SHOWN
-        },
-        |look, shown| {
-            let span = f32::from(ClockLook::MAX_WEIGHT - ClockLook::MIN_WEIGHT);
-            let steps = (shown / SHOWN * span / f32::from(WEIGHT_STEP)).round() as u16;
-            look.weight = Some(ClockLook::MIN_WEIGHT + steps * WEIGHT_STEP);
+        &HEIGHTS,
+        apart,
+        |look| look.stretch,
+        |look, stretch| {
+            look.stretch = stretch;
         },
     );
-    let stretch = look_value(
+    let weight = look_choice(
         cx,
         store,
-        |look| {
-            (look.stretch - ClockLook::MIN_STRETCH)
-                / (ClockLook::MAX_STRETCH - ClockLook::MIN_STRETCH)
-                * SHOWN
-        },
-        |look, shown| {
-            look.stretch = ClockLook::MIN_STRETCH
-                + shown / SHOWN * (ClockLook::MAX_STRETCH - ClockLook::MIN_STRETCH);
+        &WEIGHTS,
+        weights_apart,
+        |look| look.weight,
+        |look, weight| {
+            look.weight = weight;
         },
     );
-    let shadow = look_value(
+    let lighting = look_choice(
         cx,
         store,
-        |look| look.shadow * SHOWN,
-        |look, shown| {
-            look.shadow = shown / SHOWN;
+        &LIGHTING,
+        exact,
+        |look| look.lighting,
+        |look, lighting| {
+            look.lighting = lighting;
+        },
+    );
+    let warp = look_choice(
+        cx,
+        store,
+        &WARPS,
+        exact,
+        |look| Warp::nearest(look.frame.warp),
+        |look, warp| look.frame.warp = warp.corners(),
+    );
+    let shadow = look_choice(
+        cx,
+        store,
+        &SHADOWS,
+        apart,
+        |look| look.shadow,
+        |look, shadow| {
+            look.shadow = shadow;
         },
     );
     let glass = look_value(cx, store, |look| look.glass, |look, on| look.glass = on);
@@ -78,28 +105,27 @@ pub fn look_rows(cx: &mut Cx, store: Store) -> impl View + use<> {
     vstack((
         vstack((
             settings_divider(),
-            setting_row(
-                "Arrangement",
-                field_choice(
-                    cx,
-                    &ARRANGEMENTS,
-                    move |runtime| store.section(runtime, |lock: &Lock| lock.clock.arrangement),
-                    move |runtime, arrangement| {
-                        edit(runtime, store, |look| look.arrangement = arrangement);
-                    },
-                )
-                .label("Arrangement"),
-            ),
-            settings_divider(),
-            setting_row("Weight", percent(weight).label("Weight")),
-        )),
-        vstack((
-            settings_divider(),
             setting_row_desc(
                 "Height",
-                "Stands the digits taller than the font draws them",
-                percent(stretch).label("Height"),
+                "Stems grow taller while curves stay round",
+                height.label("Height"),
             ),
+            settings_divider(),
+            setting_row("Weight", weight.label("Weight")),
+            settings_divider(),
+            setting_row_desc(
+                "Lighting",
+                "A halo around the digits, or light sweeping across them",
+                lighting.label("Lighting"),
+            ),
+            settings_divider(),
+            setting_row_desc(
+                "Warp",
+                "Bends the clock; drag its corners in the preview for any other",
+                warp.label("Warp"),
+            ),
+        )),
+        vstack((
             settings_divider(),
             setting_row_desc(
                 "Frosted glass",
@@ -107,7 +133,7 @@ pub fn look_rows(cx: &mut Cx, store: Store) -> impl View + use<> {
                 toggle(glass).label("Frosted glass"),
             ),
             settings_divider(),
-            setting_row("Shadow", percent(shadow).label("Shadow")),
+            setting_row("Shadow", shadow.label("Shadow")),
             settings_divider(),
             setting_row_desc(
                 "Animate changes",
@@ -128,6 +154,14 @@ pub fn look_rows(cx: &mut Cx, store: Store) -> impl View + use<> {
             ),
         )),
     ))
+}
+
+fn weights_apart(left: Option<u16>, right: Option<u16>) -> f32 {
+    match (left, right) {
+        (Some(left), Some(right)) => f32::from(left.abs_diff(right)),
+        (None, None) => 0.0,
+        _ => f32::from(u16::MAX),
+    }
 }
 
 fn depth_rows(cx: &mut Cx, store: Store) -> impl View + use<> {
@@ -170,9 +204,22 @@ fn depth_rows(cx: &mut Cx, store: Store) -> impl View + use<> {
     ))
 }
 
-/// A 0–100 slider over `value`.
-fn percent(value: Signal<f32>) -> Element<SliderKind> {
-    slider(value).range(0.0, SHOWN)
+/// Segments over `options` for one part of the clock's look.
+fn look_choice<T: Copy + PartialEq + 'static>(
+    cx: &mut Cx,
+    store: Store,
+    options: &'static Options<T>,
+    distance: fn(T, T) -> f32,
+    read: fn(&ClockLook) -> T,
+    write: fn(&mut ClockLook, T),
+) -> Element<ToggleGroupKind> {
+    segments(
+        cx,
+        options,
+        distance,
+        move |runtime| store.section(runtime, |lock: &Lock| read(&lock.clock)),
+        move |runtime, value| edit(runtime, store, |look| write(look, value)),
+    )
 }
 
 /// One part of the clock's look, read and written through the whole key.

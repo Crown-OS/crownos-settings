@@ -7,6 +7,7 @@
 
 mod messages;
 mod pictures;
+mod thumbnails;
 
 use std::time::Instant;
 
@@ -23,6 +24,7 @@ pub use messages::{
     BackdropRequest, LayoutRequest, Painted, Picture, Slot, StudioCommand, StudioEvent,
 };
 use pictures::{SlotKey, Source};
+pub use thumbnails::{Shelf, ThumbnailRequest};
 
 /// Dots in the sample password, enough to read as one.
 const SAMPLE_PASSWORD_CHARS: usize = 6;
@@ -66,6 +68,7 @@ struct Work {
     layout: Option<LayoutRequest>,
     repaint: bool,
     backdrop: Option<BackdropRequest>,
+    thumbnails: [Option<ThumbnailRequest>; Shelf::ALL.len()],
 }
 
 impl Work {
@@ -73,6 +76,10 @@ impl Work {
         match command {
             StudioCommand::Layout(request) => self.layout = Some(*request),
             StudioCommand::Backdrop(request) => self.backdrop = Some(request),
+            StudioCommand::Thumbnails(request) => {
+                let shelf = request.shelf as usize;
+                self.thumbnails[shelf] = Some(*request);
+            }
         }
     }
 }
@@ -85,6 +92,7 @@ struct Studio {
     sources: Vec<Source>,
     /// What each [`Slot`] was last sent, so an unchanged one is not sent again.
     sent: [Option<SlotKey>; Slot::ALL.len()],
+    thumbnails: [Option<ThumbnailRequest>; Shelf::ALL.len()],
 }
 
 impl Studio {
@@ -100,7 +108,24 @@ impl Studio {
         if let Some(request) = work.backdrop {
             self.backdrop(&request, &mut events);
         }
+        for (shelf, request) in work.thumbnails.into_iter().enumerate() {
+            let asked = request.is_some();
+            if let Some(request) = request {
+                self.thumbnails[shelf] = Some(request);
+            }
+            if (asked || work.repaint)
+                && let Some(request) = self.thumbnails[shelf].take()
+            {
+                events.push(self.thumbnails(&request));
+                self.thumbnails[shelf] = Some(request);
+            }
+        }
         events
+    }
+
+    fn painter(&mut self) -> &mut Painter {
+        self.painter
+            .get_or_insert_with(|| Painter::new(FontSystem::new()))
     }
 
     fn paint(&mut self) -> Option<StudioEvent> {
@@ -165,6 +190,7 @@ pub fn paint_now(layout: LayoutRequest, backdrop: BackdropRequest) -> Vec<Studio
         layout: Some(layout),
         repaint: false,
         backdrop: Some(backdrop),
+        thumbnails: Default::default(),
     })
 }
 

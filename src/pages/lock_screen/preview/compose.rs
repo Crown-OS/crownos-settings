@@ -50,29 +50,7 @@ pub fn compose(
     let bounds = Rect::new(Point::ZERO, size);
     list.save();
     list.clip(bounds, CornerRadii::uniform(CORNER_RADIUS));
-    list.fill(bounds, CornerRadii::ZERO, BLACK);
-    if let Some(desktop) = backdrop.get(Slot::Desktop) {
-        list.image(desktop.image, bounds);
-    }
-    if look.own_background {
-        layer(list, frame.backdrop, |list| {
-            match (look.fill, backdrop.get(Slot::Lock)) {
-                (Some(color), _) => list.fill(bounds, CornerRadii::ZERO, color),
-                (None, Some(picture)) => list.image(picture.image, bounds),
-                (None, None) => {}
-            }
-        });
-    }
-    if let Some(blurred) = backdrop.get(Slot::Blurred) {
-        layer(list, frame.backdrop, |list| {
-            list.image(blurred.image, bounds)
-        });
-    }
-    list.fill(
-        bounds,
-        CornerRadii::ZERO,
-        BLACK.with_alpha_factor(look.dim.clamp(0.0, 1.0) * frame.backdrop),
-    );
+    background(list, bounds, look, backdrop, frame.backdrop);
 
     let to_preview = size.width / output[0];
     for (kind, style) in [(Layer::Clock, frame.clock), (Layer::Prompt, frame.prompt)] {
@@ -119,6 +97,31 @@ pub fn compose(
         handles(list, edit, mode, to_preview);
     }
     list.restore();
+}
+
+/// What the lock is drawn over, its own background showing at `shown`.
+pub fn background(list: &mut DrawList, bounds: Rect, look: &Look, backdrop: &Backdrop, shown: f32) {
+    list.fill(bounds, CornerRadii::ZERO, BLACK);
+    if let Some(desktop) = backdrop.get(Slot::Desktop) {
+        list.image(desktop.image, bounds);
+    }
+    if look.own_background {
+        layer(list, shown, |list| {
+            match (look.fill, backdrop.get(Slot::Lock)) {
+                (Some(color), _) => list.fill(bounds, CornerRadii::ZERO, color),
+                (None, Some(picture)) => list.image(picture.image, bounds),
+                (None, None) => {}
+            }
+        });
+    }
+    if let Some(blurred) = backdrop.get(Slot::Blurred) {
+        layer(list, shown, |list| list.image(blurred.image, bounds));
+    }
+    list.fill(
+        bounds,
+        CornerRadii::ZERO,
+        BLACK.with_alpha_factor(look.dim.clamp(0.0, 1.0) * shown),
+    );
 }
 
 /// A digit mid-change: scaled about its own centre, and crossing from sharp

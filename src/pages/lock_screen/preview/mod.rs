@@ -11,6 +11,7 @@ mod editor;
 mod frames;
 mod playback;
 mod requests;
+mod shelves;
 mod sprites;
 mod studio;
 #[cfg(test)]
@@ -34,9 +35,11 @@ use crate::state::Store;
 use crate::util::bridge::bridge;
 use crate::util::worker::{mailbox, spawn_worker};
 use backdrop::Backdrop;
-use compose::{CORNER_RADIUS, Clock, Look, compose};
+pub use compose::CORNER_RADIUS;
+use compose::{Clock, Look, compose};
 use editor::{EditMode, Grab};
 use playback::{Mode, Playback};
+use shelves::Shelves;
 use sprites::SpriteSet;
 
 /// What the preview lays out for when no monitor has reported its size.
@@ -73,6 +76,7 @@ struct State {
     grab: Signal<Option<Grab>>,
     /// The instant changing digits are drawn at.
     morph_clock: Signal<Instant>,
+    shelves: Signal<Shelves>,
 }
 
 impl Preview {
@@ -96,6 +100,7 @@ impl Preview {
             edit_mode: cx.signal(EditMode::default()),
             grab: cx.signal(None),
             morph_clock: cx.signal(now),
+            shelves: cx.signal(Shelves::default()),
         };
         let commands = spawn_worker(cx, studio::run, move |cx, event| state.accept(cx, event));
         state.follow(cx, commands);
@@ -195,6 +200,25 @@ impl Preview {
 }
 
 impl State {
+    /// What the lock's settings say about the background, apart from pictures.
+    fn look(self, runtime: &mut Runtime) -> Look {
+        let (dim, background) = self
+            .store
+            .section(runtime, |lock: &Lock| (lock.dim, lock.background.clone()));
+        let fill = match &background {
+            LockBackground::Token(token) => Some(self.store.section(runtime, |theme: &Theme| {
+                let [red, green, blue, alpha] = Palette::new(theme).color(token);
+                Color::new(red, green, blue, alpha)
+            })),
+            LockBackground::Desktop | LockBackground::Image(_) => None,
+        };
+        Look {
+            own_background: background != LockBackground::Desktop,
+            fill,
+            dim,
+        }
+    }
+
     fn paint(self, runtime: &mut Runtime, size: Size, list: &mut DrawList) {
         if self
             .size
@@ -207,21 +231,7 @@ impl State {
         }
         let frame = self.frame.get(runtime);
         let output = self.output(runtime);
-        let (dim, background) = self
-            .store
-            .section(runtime, |lock: &Lock| (lock.dim, lock.background.clone()));
-        let fill = match &background {
-            LockBackground::Token(token) => Some(self.store.section(runtime, |theme: &Theme| {
-                let [red, green, blue, alpha] = Palette::new(theme).color(token);
-                Color::new(red, green, blue, alpha)
-            })),
-            LockBackground::Desktop | LockBackground::Image(_) => None,
-        };
-        let look = Look {
-            own_background: background != LockBackground::Desktop,
-            fill,
-            dim,
-        };
+        let look = self.look(runtime);
         let shown = self.shown_frame(runtime);
         let edit = self.clock_edit(runtime, shown);
         let handles = (self.mode.get(runtime) == Mode::Clock && !self.animating.get(runtime))

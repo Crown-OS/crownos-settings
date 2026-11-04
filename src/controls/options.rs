@@ -35,6 +35,17 @@ impl<T: Copy + PartialEq + 'static> Options<T> {
         self.0.get(index).map(|(_, value)| *value)
     }
 
+    /// Where the entry nearest `value` by `distance` sits.
+    pub(super) fn nearest(&self, value: T, distance: fn(T, T) -> f32) -> usize {
+        self.0
+            .iter()
+            .enumerate()
+            .min_by(|(_, (_, left)), (_, (_, right))| {
+                distance(*left, value).total_cmp(&distance(*right, value))
+            })
+            .map_or(0, |(index, _)| index)
+    }
+
     /// The values, in table order.
     pub fn values(&self) -> impl Iterator<Item = T> + '_ {
         self.0.iter().map(|(_, value)| *value)
@@ -54,5 +65,9 @@ mod tests {
         assert_eq!(SIZES.index_of(2), None, "an unknown value selects nothing");
         assert_eq!(SIZES.value_at(0), Some(1));
         assert_eq!(SIZES.value_at(9), None);
+        assert_eq!(
+            SIZES.nearest(3, |left, right| left.abs_diff(right) as f32),
+            1
+        );
     }
 }

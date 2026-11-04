@@ -53,14 +53,19 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep_until};
 
+use crate::util::jpeg;
 use crate::util::worker::{MessageProxy, spawn_worker};
 
 /// How long to wait before knocking on the daemon's socket again.
 ///
 /// Long enough not to spin while crownpaper is genuinely absent, short enough
 /// that a daemon restarting mid-session is back in the picker's good graces
-/// before the user has read the offline notice.
+/// before the user has read the offline notice. Each failure doubles it up to
+/// [`LONGEST_RECONNECT_DELAY`], so a daemon that is not installed costs a wakeup
+/// every half minute rather than every two seconds; a click on a wallpaper
+/// still knocks at once.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
+const LONGEST_RECONNECT_DELAY: Duration = Duration::from_secs(30);
 
 /// The transition handed to `set`, in seconds — crownpaper's own CLI default,
 /// so a wallpaper picked here blooms in exactly like one picked anywhere else.
@@ -484,8 +489,10 @@ struct Daemon {
     client: Option<AsyncClient>,
     /// When the next connection attempt is due; `None` while connected.
     retry_at: Option<Instant>,
+    /// How long the attempt after the next failure waits.
+    backoff: Duration,
     /// Whether the UI has been told about the current outage, so a retry loop
-    /// doesn't repeat the bad news every two seconds.
+    /// doesn't repeat the bad news on every attempt.
     announced_offline: bool,
 }
 
@@ -495,6 +502,7 @@ impl Daemon {
         Self {
             client: None,
             retry_at: Some(Instant::now()),
+            backoff: RECONNECT_DELAY,
             announced_offline: false,
         }
     }
@@ -513,6 +521,7 @@ impl Daemon {
         match subscribed_client().await {
             Ok(client) => {
                 self.client = Some(client);
+                self.backoff = RECONNECT_DELAY;
                 self.announced_offline = false;
                 let _ = proxy.message(WallpaperEvent::Online);
                 // A daemon that restarted came back with an empty cache, so
@@ -525,10 +534,12 @@ impl Daemon {
         }
     }
 
-    /// The daemon is gone: drop the client, arm the retry, say so once.
+    /// The daemon is gone: drop the client, arm the retry with backoff, say so
+    /// once.
     fn lost(&mut self, proxy: &MessageProxy<WallpaperEvent>) {
         self.client = None;
-        self.retry_at = Some(Instant::now() + RECONNECT_DELAY);
+        self.retry_at = Some(Instant::now() + self.backoff);
+        self.backoff = (self.backoff * 2).min(LONGEST_RECONNECT_DELAY);
         if !self.announced_offline {
             self.announced_offline = true;
             let _ = proxy.message(WallpaperEvent::Offline);
@@ -710,7 +721,15 @@ async fn decode_all(paths: Vec<String>, proxy: MessageProxy<WallpaperEvent>) {
 
 /// One file's grid-sized pixels, or `None` for anything undecodable.
 fn thumbnail(path: &Path) -> Option<Pixels> {
-    let decoded = image::ImageReader::open(path).ok()?.decode().ok()?;
+    let decoded = match jpeg::decode_scaled(path, THUMBNAIL_EDGE) {
+        Some(decoded) => decoded,
+        None => image::ImageReader::open(path)
+            .ok()?
+            .with_guessed_format()
+            .ok()?
+            .decode()
+            .ok()?,
+    };
     // `thumbnail` fits within the box preserving aspect ratio, and uses a
     // fast integer path for the large downscales wallpapers always are.
     let scaled = decoded

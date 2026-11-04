@@ -51,8 +51,8 @@ pub struct Store {
     pub cross_device: Signal<CrossDeviceState>,
     /// The themes and plugins crownplugind runs, and their settings.
     pub plugins: Signal<PluginsState>,
-    /// The microphones this machine has — read once, see
-    /// [`crate::net::audio`] for why it is not watched.
+    /// The microphones this machine has — read once, off the interface's
+    /// thread, see [`crate::net::audio`] for why it is not watched.
     pub microphones: Signal<Microphones>,
 }
 
@@ -81,7 +81,7 @@ impl Store {
     /// no worker has run yet, so every page starts in its "looking…" state.
     pub fn load(runtime: &mut Runtime) -> Self {
         let config = Settings::load(runtime);
-        Self::with(runtime, config, Microphones::probe())
+        Self::with(runtime, config)
     }
 
     /// A store of nothing but defaults, for tests that must not touch the
@@ -89,10 +89,10 @@ impl Store {
     #[cfg(test)]
     pub fn defaults(runtime: &mut Runtime) -> Self {
         let config = Settings::defaults(runtime);
-        Self::with(runtime, config, Microphones::default())
+        Self::with(runtime, config)
     }
 
-    fn with(runtime: &mut Runtime, config: Settings, microphones: Microphones) -> Self {
+    fn with(runtime: &mut Runtime, config: Settings) -> Self {
         Self {
             config,
             wifi: runtime.signal(WifiState::default()),
@@ -100,7 +100,7 @@ impl Store {
             outputs: runtime.signal(OutputState::default()),
             cross_device: runtime.signal(CrossDeviceState::default()),
             plugins: runtime.signal(PluginsState::default()),
-            microphones: runtime.signal(microphones),
+            microphones: runtime.signal(Microphones::default()),
         }
     }
 
@@ -108,6 +108,14 @@ impl Store {
     /// calling component lives.
     pub fn start(self, cx: &mut Cx) {
         self.config.watch(cx);
+        // ALSA enumeration takes tens of milliseconds, which would otherwise
+        // hold back the window's first frame.
+        let probe = async { tokio::task::spawn_blocking(Microphones::probe).await };
+        cx.spawn(probe, move |cx, probed| {
+            if let Ok(probed) = probed {
+                self.microphones.set(cx, probed);
+            }
+        });
         wifi_worker(cx, self.wifi, move |cx, event| self.mirror_wifi(cx, event));
         wallpaper_worker(cx, self.wallpaper, move |cx, event| {
             self.mirror_wallpaper(cx, event);

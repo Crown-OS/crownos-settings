@@ -7,14 +7,29 @@ use crownui::prelude::{Cx, Runtime};
 use lockscreen::lockscene::LockScene;
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::studio::{BackdropRequest, LayoutRequest, StudioCommand};
+use super::studio::{BackdropRequest, LayoutRequest, Shelf, StudioCommand, ThumbnailRequest};
 use super::{FALLBACK_OUTPUT, State};
+use crate::pages::lock_screen::looks::{FACES, LOOKS};
+
+/// Logical pixels across a look's thumbnail.
+const LOOK_PIXELS: f32 = 200.0;
+/// Thumbnail pixels per logical output pixel of a face's.
+const FACE_SCALE: f32 = 0.3;
 
 impl State {
     /// Keeps the studio's requests in step with the settings and the canvas.
     pub(super) fn follow(self, cx: &mut Cx, commands: UnboundedSender<StudioCommand>) {
         let layout = cx.memo(move |runtime| self.layout_request(runtime));
         let backdrop = cx.memo(move |runtime| self.backdrop_request(runtime));
+        for shelf in Shelf::ALL {
+            let request = cx.memo(move |runtime| self.thumbnail_request(runtime, shelf));
+            let sender = commands.clone();
+            cx.effect(move |runtime| {
+                if let Some(request) = request.get(runtime) {
+                    let _ = sender.send(StudioCommand::Thumbnails(Box::new(request)));
+                }
+            });
+        }
         let sender = commands.clone();
         cx.effect(move |runtime| {
             if let Some(request) = layout.get(runtime) {
@@ -45,6 +60,51 @@ impl State {
             },
             output,
             scale,
+        })
+    }
+
+    fn thumbnail_request(self, runtime: &mut Runtime, shelf: Shelf) -> Option<ThumbnailRequest> {
+        let device_scale = self.device_scale.get(runtime);
+        let output = self.output(runtime);
+        let (base, warp) = self.store.section(runtime, |lock: &Lock| {
+            (laid_out(lock), lock.clock.frame.warp)
+        });
+        let theme = self.store.section(runtime, Theme::clone);
+        let scene = |config| LockScene {
+            config,
+            theme: theme.clone(),
+            ..LockScene::default()
+        };
+        let (scenes, scale) = match shelf {
+            Shelf::Looks => (
+                LOOKS
+                    .iter()
+                    .map(|look| {
+                        let mut config = base.clone();
+                        look.apply(&mut config);
+                        scene(config)
+                    })
+                    .collect(),
+                LOOK_PIXELS / output[0],
+            ),
+            Shelf::Faces => (
+                FACES
+                    .iter()
+                    .map(|face| {
+                        let mut config = base.clone();
+                        config.clock.frame.warp = warp;
+                        face.apply(&mut config);
+                        scene(config)
+                    })
+                    .collect(),
+                FACE_SCALE,
+            ),
+        };
+        Some(ThumbnailRequest {
+            shelf,
+            scenes,
+            output,
+            scale: scale * device_scale,
         })
     }
 

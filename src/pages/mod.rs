@@ -125,6 +125,14 @@ pub fn build(cx: &mut Cx, store: Store, ordinal: usize) -> AnyView {
     }
 }
 
+/// Whether the page at `ordinal` lists Wi-Fi networks, so navigation knows
+/// when access points changing strength are worth a re-read.
+pub fn shows_networks(ordinal: usize) -> bool {
+    all_pages()
+        .nth(ordinal)
+        .is_some_and(|page| page.title == wifi::PAGE.title)
+}
+
 /// Whether the page at `ordinal` hosts the wallpaper picker, so navigation
 /// knows when thumbnails and the daemon's preload cache are worth paying for.
 pub fn shows_wallpapers(ordinal: usize) -> bool {
@@ -147,6 +155,12 @@ mod tests {
     #[test]
     fn exactly_one_registered_page_hosts_the_picker() {
         let ordinals = (0..all_pages().count()).filter(|ordinal| shows_wallpapers(*ordinal));
+        assert_eq!(ordinals.count(), 1);
+    }
+
+    #[test]
+    fn exactly_one_registered_page_lists_networks() {
+        let ordinals = (0..all_pages().count()).filter(|ordinal| shows_networks(*ordinal));
         assert_eq!(ordinals.count(), 1);
     }
 
