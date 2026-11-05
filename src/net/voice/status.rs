@@ -1,6 +1,5 @@
 //! One `status()` call, and what its answer means for the status row.
 
-use std::cmp::Reverse;
 use std::path::Path;
 use std::time::Duration;
 
@@ -36,7 +35,7 @@ pub(super) async fn run(
 async fn query() -> VoiceService {
     match timeout(ANSWER_TIMEOUT, ask_status()).await {
         Ok(Ok(status)) => VoiceService::Running {
-            backend: serving_backend(&status.backends),
+            backend: serving_backend(&status),
         },
         Ok(Err(IpcError::ServiceUnavailable { .. })) if !Path::new(DAEMON_EXECUTABLE).exists() => {
             VoiceService::NotInstalled
@@ -52,13 +51,13 @@ async fn ask_status() -> Result<ServiceStatus, IpcError> {
         .await
 }
 
-/// The backend a stream runs on: one already loaded, else the one the daemon
-/// would load first — the highest real-time score, ties to the earlier entry.
-fn serving_backend(backends: &[BackendInfo]) -> Option<String> {
-    backends
+/// The backend the daemon itself says a new live stream would run on.
+fn serving_backend(status: &ServiceStatus) -> Option<String> {
+    let name = status.realtime_backend.as_deref()?;
+    status
+        .backends
         .iter()
-        .filter(|backend| backend.realtime_score > 0)
-        .min_by_key(|backend| (Reverse(backend.loaded), Reverse(backend.realtime_score)))
+        .find(|backend| backend.name == name)
         .map(label)
 }
 
@@ -75,53 +74,46 @@ fn label(backend: &BackendInfo) -> String {
 mod tests {
     use super::*;
 
-    fn backend(name: &str, device: &str, realtime_score: u32, loaded: bool) -> BackendInfo {
+    fn backend(name: &str, device: &str) -> BackendInfo {
         BackendInfo {
             name: name.to_owned(),
             device: device.to_owned(),
-            realtime_score,
-            offline_score: realtime_score,
-            loaded,
+            realtime_score: 40,
+            offline_score: 40,
+            loaded: false,
+        }
+    }
+
+    fn status(realtime_backend: Option<&str>) -> ServiceStatus {
+        ServiceStatus {
+            backends: vec![
+                backend("onnx", "Radeon 780M"),
+                backend("cpu", "Ryzen 7 7840U"),
+                backend("passthrough", ""),
+            ],
+            streams: 0,
+            jobs: 0,
+            realtime_backend: realtime_backend.map(str::to_owned),
+            offline_backend: None,
         }
     }
 
     #[test]
-    fn the_loaded_backend_is_the_one_in_use() {
-        let backends = [
-            backend("onnx", "Radeon 780M", 90, false),
-            backend("cpu", "Ryzen 7 7840U", 40, true),
-        ];
+    fn names_the_backend_the_daemon_selected() {
         assert_eq!(
-            serving_backend(&backends).as_deref(),
+            serving_backend(&status(Some("cpu"))).as_deref(),
             Some("cpu: Ryzen 7 7840U")
         );
-    }
-
-    #[test]
-    fn an_idle_daemon_names_the_backend_it_would_load_first() {
-        let backends = [
-            backend("passthrough", "", 1, false),
-            backend("cpu", "Ryzen 7 7840U", 40, false),
-            backend("onnx", "Radeon 780M", 40, false),
-        ];
         assert_eq!(
-            serving_backend(&backends).as_deref(),
-            Some("cpu: Ryzen 7 7840U"),
-            "a tie goes to the earlier entry"
-        );
-        assert_eq!(
-            serving_backend(&[backend("passthrough", "", 1, false)]).as_deref(),
+            serving_backend(&status(Some("passthrough"))).as_deref(),
             Some("passthrough"),
             "a backend without a device is named alone"
         );
     }
 
     #[test]
-    fn a_backend_that_cannot_run_live_is_never_named() {
-        assert_eq!(
-            serving_backend(&[backend("onnx", "Radeon 780M", 0, true)]),
-            None
-        );
-        assert_eq!(serving_backend(&[]), None);
+    fn no_selection_names_nothing() {
+        assert_eq!(serving_backend(&status(None)), None);
+        assert_eq!(serving_backend(&status(Some("maxine"))), None);
     }
 }
