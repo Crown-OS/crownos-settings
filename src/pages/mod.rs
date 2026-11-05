@@ -10,6 +10,7 @@
 //! the registered pages belong to the plugin settings pages, which the sidebar
 //! lists from the live plugin list.
 
+mod android;
 mod appearance;
 mod bluetooth;
 mod cross_device;
@@ -83,6 +84,7 @@ pub static GROUPS: &[PageGroup] = &[
         pages: &[
             keybinds::PAGE,
             notifications::PAGE,
+            android::PAGE,
             screenshot::PAGE,
             power::PAGE,
         ],

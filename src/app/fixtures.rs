@@ -3,6 +3,9 @@
 
 use crownui::prelude::{Cx, Size};
 
+use crate::net::android::{
+    AndroidConfig, AndroidService, AndroidTier, GpuTier, RuntimeState, RuntimeStatus, Storage,
+};
 use crate::net::audio::{Microphone, Microphones};
 use crate::net::crownconnect::{
     Battery, Device, DeviceClass, DeviceId, DeviceInfo, Feature, FeatureSet, Link, LinkKind,
@@ -18,8 +21,8 @@ use crate::net::wifi::{ActiveWifi, KnownNetwork, LinkState, OtherNetwork, WifiSn
 use crate::state::Store;
 
 /// Every backend as if it had spoken: networks with a prompt open, a
-/// gallery of thumbnails, a monitor picked, a paired phone, two microphones
-/// and crown-voiced enhancing on the CPU.
+/// gallery of thumbnails, a monitor picked, a paired phone, two microphones,
+/// crown-voiced enhancing on the CPU and Android running two apps.
 pub(super) fn populate(cx: &mut Cx, store: Store) {
     store.wifi.update(cx, |wifi| {
         wifi.snapshot = Some(WifiSnapshot {
@@ -142,6 +145,32 @@ pub(super) fn populate(cx: &mut Cx, store: Store) {
     });
     populate_plugins(cx, store);
     populate_voice(cx, store);
+    populate_android(cx, store);
+}
+
+/// Android with Google Play, running two apps through Venus.
+pub(super) fn populate_android(cx: &mut Cx, store: Store) {
+    const BUNDLE: &str = "2026.11.0";
+    store.android.update(cx, |android| {
+        android.installed = Some(AndroidConfig {
+            enabled: true,
+            google_play: true,
+            tier: Some(AndroidTier::Venus),
+            bundle: Some(BUNDLE.to_owned()),
+        });
+        android.service = AndroidService::Answered(RuntimeStatus {
+            state: RuntimeState::Running,
+            windows: 2,
+            idle_stop_at_ms: None,
+            tier: Some(GpuTier::Venus),
+            bundle_version: Some(BUNDLE.to_owned()),
+        });
+        android.registration_id = Some("3f8a1c2b9d7e6054".to_owned());
+        android.storage = Storage {
+            images_bytes: Some(1_437_000_000),
+            data_bytes: Some(212_000_000),
+        };
+    });
 }
 
 fn populate_voice(cx: &mut Cx, store: Store) {

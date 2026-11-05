@@ -662,6 +662,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "crownos-android-protocol"
+version = "0.1.0"
+dependencies = [
+ "crownos-android-setup-state",
+ "crownos-ipc",
+ "serde",
+]
+
+[[package]]
+name = "crownos-android-setup-state"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "crownos-config"
 version = "0.1.0"
 dependencies = [
@@ -753,6 +771,8 @@ dependencies = [
  "chrono",
  "crownconfig",
  "crownconnect-linux",
+ "crownos-android-protocol",
+ "crownos-android-setup-state",
  "crownos-config",
  "crownos-ipc",
  "crownos-voice-protocol",

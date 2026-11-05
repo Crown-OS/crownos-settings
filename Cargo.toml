@@ -28,6 +28,10 @@ crownpaper = { path = "../crownpaper", default-features = false }
 # crown-voiced's own declaration of its protocol, for the Voice page's status
 # row. The schema alone; the daemon's audio stack is not built here.
 voice-protocol = { package = "crownos-voice-protocol", path = "../crownos-voice/crates/voice-protocol" }
+# crown-androidd's own declaration of its protocol and the setup service's
+# progress record, for the Android apps page. The schema alone.
+android-protocol = { package = "crownos-android-protocol", path = "../crownos-android/crates/android-protocol" }
+setup-state = { package = "crownos-android-setup-state", path = "../crownos-android/crates/setup-state" }
 # The crownplugind contract, for the Plugins & Themes page. The daemon is the
 # only writer of `plugins.ron`; this app asks it over IPC.
 crownplugin-proto = { path = "../crownos-plugins/proto" }

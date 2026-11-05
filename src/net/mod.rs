@@ -36,6 +36,7 @@
 //! commands, so it is a channel mirrored into a signal rather than a worker.
 //! Its module docs say why.
 
+pub mod android;
 pub mod audio;
 pub mod crownconnect;
 pub mod outputs;

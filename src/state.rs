@@ -27,6 +27,7 @@ use crownos_config::schema::{appearance, wifi};
 use crownui::prelude::{Cx, Runtime, Signal};
 
 use crate::config::{Section, Settings};
+use crate::net::android::{AndroidState, android_worker};
 use crate::net::audio::{Microphones, follow_microphones};
 use crate::net::crownconnect::{CrossDeviceState, crownconnect_worker};
 use crate::net::outputs::{OutputState, output_worker};
@@ -58,6 +59,8 @@ pub struct Store {
     pub microphones: Signal<Microphones>,
     /// crown-voiced, as far as the Voice page's status row is concerned.
     pub voice: Signal<VoiceState>,
+    /// crown-androidd and the Android setup, for the Android apps page.
+    pub android: Signal<AndroidState>,
 }
 
 impl Store {
@@ -86,6 +89,7 @@ impl Store {
             plugins: runtime.signal(PluginsState::default()),
             microphones: runtime.signal(Microphones::default()),
             voice: runtime.signal(VoiceState::default()),
+            android: runtime.signal(AndroidState::default()),
         }
     }
 
@@ -102,6 +106,7 @@ impl Store {
         crownconnect_worker(cx, self.cross_device);
         plugins_worker(cx, self.plugins);
         voice_worker(cx, self.voice);
+        android_worker(cx, self.android);
     }
 
     // --- MARK: Config delegation ---
