@@ -1,18 +1,17 @@
-//! The thumbnails of other looks and faces, on the GPU, and the canvases
-//! that show them: a look over the lock's own background, a face on its own.
+//! The Clock & colour sheet's pictures on the GPU, and the canvases that
+//! show them: a layout over the whole screen, a font as the hours alone.
 
 use crownui::ext::DrawList;
 use crownui::prelude::{
-    Color, CornerRadii, Cx, Point, Rect, Role, Runtime, Semantic, Size, Styled, View, bind, canvas,
+    Cx, Point, Rect, Role, Runtime, Semantic, Size, Styled, View, bind, canvas,
 };
 
-use super::compose::{CORNER_RADIUS, background};
 use super::studio::{Picture, Shelf};
 use super::{Preview, State};
 use crate::util::texture::Texture;
 
-/// Behind a face, whatever the background: ColorOS's grey clock tile.
-const FACE_GROUND: Color = Color::new(0.294, 0.294, 0.286, 1.0);
+/// Width over height of a layout card before its picture arrives.
+const CARD_ASPECT: f32 = 0.75;
 
 #[derive(Default)]
 pub struct Shelves {
@@ -42,26 +41,17 @@ impl State {
         }
     }
 
-    fn paint_look(self, runtime: &mut Runtime, index: usize, size: Size, list: &mut DrawList) {
-        let look = self.look(runtime);
-        let bounds = Rect::new(Point::ZERO, size);
-        list.save();
-        list.clip(bounds, CornerRadii::uniform(CORNER_RADIUS));
-        runtime.with2(self.backdrop, self.shelves, |backdrop, shelves| {
-            background(list, bounds, &look, backdrop, 1.0);
-            if let Some(thumbnail) = shelves.get(Shelf::Looks, index) {
-                list.image(thumbnail.image, bounds);
-            }
-        });
-        list.restore();
-    }
-
-    fn paint_face(self, runtime: &mut Runtime, index: usize, size: Size, list: &mut DrawList) {
-        let bounds = Rect::new(Point::ZERO, size);
-        list.fill(bounds, CornerRadii::uniform(CORNER_RADIUS), FACE_GROUND);
+    fn paint_shelf(
+        self,
+        runtime: &mut Runtime,
+        shelf: Shelf,
+        index: usize,
+        size: Size,
+        list: &mut DrawList,
+    ) {
         self.shelves.with(runtime, |shelves| {
-            if let Some(thumbnail) = shelves.get(Shelf::Faces, index) {
-                list.image(thumbnail.image, contained(thumbnail.size, size));
+            if let Some(picture) = shelves.get(shelf, index) {
+                list.image(picture.image, contained(picture.size, size));
             }
         });
     }
@@ -71,36 +61,41 @@ impl State {
 fn contained(picture: Size, size: Size) -> Rect {
     let scale = (size.width / picture.width).min(size.height / picture.height);
     let (width, height) = (picture.width * scale, picture.height * scale);
-    Rect::from_xywh(
-        (size.width - width) / 2.0,
-        (size.height - height) / 2.0,
-        width,
-        height,
+    Rect::new(
+        Point::new((size.width - width) / 2.0, (size.height - height) / 2.0),
+        Size::new(width, height),
     )
 }
 
 impl Preview {
-    /// The lock screen as it would look in `LOOKS[index]`.
-    pub fn look_picture(&self, index: usize) -> impl View + use<> {
+    /// The clock in the sheet's layout `index`, on a card its picture's shape.
+    pub fn layout_picture(&self, index: usize) -> impl View + use<> {
         let state = self.state;
-        canvas(move |runtime, size, list| state.paint_look(runtime, index, size, list))
-            .w_full()
-            .aspect(bind(move |runtime| {
-                let [width, height] = state.output(runtime);
-                width / height
-            }))
-            .rounded(CORNER_RADIUS)
-            .role(Role::Image)
+        canvas(move |runtime, size, list| {
+            state.paint_shelf(runtime, Shelf::Layouts, index, size, list);
+        })
+        .w_full()
+        .aspect(bind(move |runtime| {
+            state.shelves.with(runtime, |shelves| {
+                shelves
+                    .get(Shelf::Layouts, index)
+                    .map_or(CARD_ASPECT, |picture| {
+                        picture.size.width / picture.size.height
+                    })
+            })
+        }))
+        .role(Role::Image)
     }
 
-    /// The clock in `FACES[index]`, `height` logical pixels tall.
-    pub fn face_picture(&self, index: usize, height: f32) -> impl View + use<> {
+    /// The hours in the sheet's font `index`, `height` logical pixels tall.
+    pub fn font_picture(&self, index: usize, height: f32) -> impl View + use<> {
         let state = self.state;
-        canvas(move |runtime, size, list| state.paint_face(runtime, index, size, list))
-            .w_full()
-            .h(height)
-            .rounded(CORNER_RADIUS)
-            .role(Role::Image)
+        canvas(move |runtime, size, list| {
+            state.paint_shelf(runtime, Shelf::Fonts, index, size, list);
+        })
+        .w_full()
+        .h(height)
+        .role(Role::Image)
     }
 }
 

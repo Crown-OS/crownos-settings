@@ -14,6 +14,7 @@ pub mod lucide;
 pub mod persist;
 pub mod pixmap;
 pub mod qr;
+pub mod signal;
 pub mod texture;
 pub mod theme;
 pub mod worker;

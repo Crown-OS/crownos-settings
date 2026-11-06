@@ -1,8 +1,9 @@
-//! What the lock screen is drawn over, and how much it is softened.
+//! The Wallpaper sheet: what the lock screen is drawn over, and how much
+//! darker it gets.
 
 use std::path::Path;
 
-use crownos_config::schema::lock::{Background, BlurKey, Dim};
+use crownos_config::schema::lock::{Background, Dim};
 use crownos_config::schema::theme::COLOR_TOKENS;
 use crownos_config::schema::{LockBackground, Theme, appearance};
 use crownui::kit::{StatusOptions, TextInputOptions, Tone, select, status};
@@ -14,8 +15,7 @@ use lockscreen::palette::Palette;
 use super::preview::Preview;
 use crate::controls::{Options, apart, field_choice, field_text, segments};
 use crate::layout::{
-    inline, nothing, optional, setting_row, setting_row_content, setting_row_desc,
-    settings_card_titled, settings_divider,
+    inline, nothing, optional, setting_row, setting_row_content, setting_row_desc, settings_divider,
 };
 use crate::state::Store;
 use crate::util::bridge::bridge;
@@ -41,8 +41,6 @@ static DIMS: Options<f32> = Options::new(&[
     ("Dark", 0.5),
 ]);
 
-static BLURS: Options<f32> = Options::new(&[("None", 0.0), ("Soft", 0.5), ("Full", 1.0)]);
-
 static SOURCES: Options<Source> = Options::new(&[
     ("Desktop wallpaper", Source::Desktop),
     ("Picture", Source::Picture),
@@ -57,7 +55,7 @@ fn source_of(background: &LockBackground) -> Source {
     }
 }
 
-pub fn background_card(cx: &mut Cx, store: Store, preview: &Preview) -> impl View + use<> {
+pub fn wallpaper_sheet(cx: &mut Cx, store: Store, preview: &Preview) -> impl View + use<> {
     let unreadable = preview.picture_unreadable();
     let source = field_choice(
         cx,
@@ -72,46 +70,30 @@ pub fn background_card(cx: &mut Cx, store: Store, preview: &Preview) -> impl Vie
             store.set(runtime, Background, background);
         },
     );
-    settings_card_titled(
-        "Background",
-        (
-            setting_row("Show", source.label("Background")),
-            keyed(
-                move |runtime| source_of(&store.get(runtime, Background)),
-                move |cx, source| match source {
-                    Source::Desktop => nothing().boxed(),
-                    Source::Picture => picture_rows(cx, store, unreadable).boxed(),
-                    Source::Color => color_rows(cx, store).boxed(),
-                },
-            ),
-            settings_divider(),
-            setting_row_desc(
-                "Dim",
-                "How much darker the background gets",
-                segments(
-                    cx,
-                    &DIMS,
-                    apart,
-                    move |runtime| store.get(runtime, Dim),
-                    move |runtime, dim| store.set(runtime, Dim, dim),
-                )
-                .label("Dim"),
-            ),
-            settings_divider(),
-            setting_row_desc(
-                "Blur",
-                "As a share of the desktop's own blur",
-                segments(
-                    cx,
-                    &BLURS,
-                    apart,
-                    move |runtime| store.get(runtime, BlurKey),
-                    move |runtime, blur| store.set(runtime, BlurKey, blur),
-                )
-                .label("Blur"),
-            ),
+    vstack((
+        setting_row("Show", source.label("Background")),
+        keyed(
+            move |runtime| source_of(&store.get(runtime, Background)),
+            move |cx, source| match source {
+                Source::Desktop => nothing().boxed(),
+                Source::Picture => picture_rows(cx, store, unreadable).boxed(),
+                Source::Color => color_rows(cx, store).boxed(),
+            },
         ),
-    )
+        settings_divider(),
+        setting_row_desc(
+            "Dim",
+            "How much darker the background gets",
+            segments(
+                cx,
+                &DIMS,
+                apart,
+                move |runtime| store.get(runtime, Dim),
+                move |runtime, dim| store.set(runtime, Dim, dim),
+            )
+            .label("Dim"),
+        ),
+    ))
 }
 
 fn picture_rows(cx: &mut Cx, store: Store, unreadable: Signal<bool>) -> impl View + use<> {

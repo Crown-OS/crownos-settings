@@ -40,6 +40,9 @@ crownui = { path = "../crownui/crownui", features = ["static"] }
 # page's preview — so what it shows is what the compositor draws. Without
 # `pam`: a preview never checks a password.
 lockscreen = { path = "../crownpositor/lockscreen" }
+# Where a wallpaper's depth mask is cached, and the helper process that cuts
+# one. Without `helper`: the segmentation model is never built in here.
+depthcut = { path = "../crownpositor/depthcut" }
 # Only to ask `lockscreen` when the preview's clock next reads differently;
 # already in the graph through it.
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
@@ -94,6 +97,8 @@ impeller = { path = "../crownui/impeller", features = ["static"] }
 # The actions the frame profile drives the window with.
 semantics = { path = "../crownui/semantics" }
 taffy-layout = { path = "../crownui/taffy-layout" }
+# The task executor the drag profile runs the preview's studio on.
+view = { path = "../crownui/view" }
 
 # crownconnect-linux names crownos-ipc by its git URL, crownpaper by its path:
 # one checkout for both, or their IPC traits would be two different crates.

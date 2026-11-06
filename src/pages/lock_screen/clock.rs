@@ -1,34 +1,18 @@
-//! How the clock reads: the face it wears, its size, where it sits, its
-//! formats and font.
+//! How the clock reads: its time and date formats.
 
 use crownos_config::Key;
-use crownos_config::schema::lock::{ClockStyleKey, DateFormat, Font, Layout, TimeFormat};
-use crownos_config::schema::{ClockStyle, Lock, LockLayout, Theme};
+use crownos_config::schema::Lock;
+use crownos_config::schema::lock::{DateFormat, TimeFormat};
 use crownui::kit::{TextInputOptions, select};
 use crownui::prelude::{Cx, Runtime, Semantic, View, vstack};
 use lockscreen::clock::ClockFace;
 
-use super::clock_look::look_rows;
-use super::looks::faces;
-use super::preview::Preview;
-use crate::controls::{Options, exact, field_text, segments};
+use crate::controls::field_text;
 use crate::layout::{setting_row, setting_row_desc, settings_card_titled, settings_divider, when};
 use crate::state::Store;
 use crate::util::bridge::bridge;
 
 const TEXT_WIDTH: f32 = 220.0;
-
-static STYLES: Options<ClockStyle> = Options::new(&[
-    ("Small", ClockStyle::Minimal),
-    ("Regular", ClockStyle::Classic),
-    ("Large", ClockStyle::Large),
-]);
-
-static LAYOUTS: Options<LockLayout> = Options::new(&[
-    ("Centered", LockLayout::Center),
-    ("Left", LockLayout::Left),
-    ("Bottom", LockLayout::Bottom),
-]);
 
 /// `(name, strftime pattern)`.
 type Format = (&'static str, &'static str);
@@ -40,46 +24,17 @@ const TIME_FORMATS: &[Format] = &[
 ];
 
 const DATE_FORMATS: &[Format] = &[
+    ("Default", "%a, %b %-d"),
     ("Full", "%A, %e %B"),
     ("Short", "%a %e %b"),
     ("Numeric", "%d/%m/%Y"),
     ("ISO", "%Y-%m-%d"),
 ];
 
-pub fn clock_card(cx: &mut Cx, store: Store, preview: &Preview) -> impl View + use<> {
-    let font_placeholder =
-        cx.untrack(|runtime| store.section(runtime, |theme: &Theme| theme.font.family.clone()));
+pub fn clock_card(cx: &mut Cx, store: Store) -> impl View + use<> {
     settings_card_titled(
-        "Clock",
+        "Time & date",
         (
-            faces(store, preview),
-            settings_divider(),
-            setting_row_desc(
-                "Size",
-                "Small leaves the date out",
-                segments(
-                    cx,
-                    &STYLES,
-                    exact,
-                    move |runtime| store.get(runtime, ClockStyleKey),
-                    move |runtime, style| store.set(runtime, ClockStyleKey, style),
-                )
-                .label("Size"),
-            ),
-            look_rows(cx, store),
-            settings_divider(),
-            setting_row(
-                "Layout",
-                segments(
-                    cx,
-                    &LAYOUTS,
-                    exact,
-                    move |runtime| store.get(runtime, Layout),
-                    move |runtime, layout| store.set(runtime, Layout, layout),
-                )
-                .label("Layout"),
-            ),
-            settings_divider(),
             format_rows(cx, store, TimeFormat, "Time", TIME_FORMATS, |face| {
                 face.time
             }),
@@ -87,26 +42,6 @@ pub fn clock_card(cx: &mut Cx, store: Store, preview: &Preview) -> impl View + u
             format_rows(cx, store, DateFormat, "Date", DATE_FORMATS, |face| {
                 face.date
             }),
-            settings_divider(),
-            setting_row_desc(
-                "Font",
-                "For the Theme font faces: a family installed on this computer, or empty for the theme's",
-                field_text(
-                    cx,
-                    move |runtime| store.get(runtime, Font).unwrap_or_default(),
-                    move |runtime, family| {
-                        let family = family.trim();
-                        store.set(
-                            runtime,
-                            Font,
-                            (!family.is_empty()).then(|| family.to_owned()),
-                        );
-                    },
-                )
-                .placeholder(font_placeholder)
-                .width(TEXT_WIDTH)
-                .label("Font"),
-            ),
         ),
     )
 }

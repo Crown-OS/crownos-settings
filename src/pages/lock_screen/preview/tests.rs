@@ -1,150 +1,272 @@
-//! Offscreen renders of the preview, fed by the studio in-line since tests
-//! run no task executor.
+//! Offscreen renders of the preview card, fed by the studio in-line since
+//! tests run no task executor.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crownos_config::schema::lock::ClockKey;
-use crownos_config::schema::{
-    Appearance, ClockArrangement, ClockFrame, ClockLook, Lock, LockBackground, Theme,
-};
+use crownos_config::schema::{ClockFont, ClockFrame, ClockLayout, ClockLook};
 use crownui::ext::{InlineApp, TextSystem};
 use crownui::kit::{INTER_FAMILY, inter_font};
-use crownui::prelude::{Listeners, Size, Styled, component, vstack};
+use crownui::prelude::{Cx, Size, Styled, View, canvas, component, vstack};
 use impeller::{ImpellerBackend, Offscreen};
-use lockscreen::lockscene::LockScene;
+use lockscreen::transition::{Moments, Spring};
 use taffy_layout::TaffyEngine;
 
 use super::editor::EditMode;
 use super::playback::{Mode, Playback};
-use super::studio::{BackdropRequest, LayoutRequest, paint_now};
-use super::{FALLBACK_OUTPUT, Preview, Request};
-use crate::pages::lock_screen::moment::Moment;
+use super::studio::{Shelf, paint_now};
+use super::{FALLBACK_OUTPUT, Preview, Sheet, State};
+use crate::net::outputs::{Mode as OutputMode, Monitor, Transform as OutputTransform};
+use crate::pages::lock_screen::editor;
 use crate::state::Store;
 
 const WIDTH: f32 = 760.0;
-const HEIGHT: f32 = 560.0;
+const HEIGHT: f32 = 1180.0;
 /// The canvas inside the card inside the padding.
-const CANVAS: [f32; 2] = [WIDTH - 2.0 * 24.0 - 2.0 * 18.0 - 2.0, 0.0];
+const CANVAS_WIDTH: f32 = WIDTH - 2.0 * 24.0 - 2.0 * 18.0 - 2.0;
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum Shot {
+    /// The default clock, at rest.
     Clock,
+    /// The pointer over the preview: the outline and its stretch handle.
+    Editor,
     Password,
     RevealHalfway,
-    /// Tall glass digits, stacked, warped, with the warp handles out.
+    /// Stacked serif digits, warped, with the Effects sheet's warp corners.
     Warped,
+    /// The Wallpaper sheet, the clock at the left, clear of the subject.
+    Wallpaper,
+    /// The clock moved into the subject, which gives way so it stays legible.
+    HeldBack,
 }
 
-fn warped_look() -> ClockLook {
-    ClockLook {
-        arrangement: ClockArrangement::Stacked,
-        weight: Some(200),
-        stretch: 2.2,
-        glass: true,
-        shadow: 0.7,
-        frame: ClockFrame {
-            warp: [[0.0, 0.0], [0.15, -0.1], [0.1, 0.05], [0.0, 0.0]],
-            minutes: [40.0, 0.0],
-            ..ClockFrame::default()
-        },
-        ..ClockLook::default()
+impl Shot {
+    const ALL: [Self; 7] = [
+        Self::Clock,
+        Self::Editor,
+        Self::Password,
+        Self::RevealHalfway,
+        Self::Warped,
+        Self::Wallpaper,
+        Self::HeldBack,
+    ];
+
+    fn name(self) -> String {
+        format!("{self:?}").to_lowercase()
+    }
+
+    fn look(self) -> ClockLook {
+        match self {
+            Self::Warped => ClockLook {
+                layout: ClockLayout::Stacked,
+                font: ClockFont::Serif,
+                weight: 200.0,
+                shadow: 0.7,
+                frame: ClockFrame {
+                    warp: [[0.0, 0.0], [0.15, -0.1], [0.1, 0.05], [0.0, 0.0]],
+                    minutes: [40.0, 0.0],
+                    ..ClockFrame::default()
+                },
+                ..ClockLook::default()
+            },
+            Self::Wallpaper => ClockLook {
+                layout: ClockLayout::Left,
+                ..ClockLook::default()
+            },
+            Self::HeldBack => ClockLook {
+                frame: ClockFrame {
+                    offset: [420.0, 260.0],
+                    ..ClockFrame::default()
+                },
+                ..ClockLook::default()
+            },
+            _ => ClockLook::default(),
+        }
+    }
+
+    fn sheet(self) -> Sheet {
+        match self {
+            Self::Warped => Sheet::Effects,
+            Self::Wallpaper => Sheet::Wallpaper,
+            _ => Sheet::Clock,
+        }
     }
 }
 
 /// Writes `$CROWNSETTINGS_RENDER_DIR/lock-preview-<shot>.png` over the
-/// desktop wallpaper in the real `appearance.ron`.
+/// picture `$CROWNSETTINGS_RENDER_WALLPAPER` names, with the depth cut cached
+/// for it if there is one; `$CROWNSETTINGS_RENDER_SHOTS` names the shots to
+/// take, comma-separated, all of them by default. Each shot edits the
+/// settings, so it runs only with a scratch `CROWN_CONFIG_DIR`. One shot per
+/// process: the offscreen renderer crashes as the process ends, after the
+/// picture is written.
 #[test]
-#[ignore = "needs a GPU; writes PNGs for manual inspection"]
+#[ignore = "needs a GPU and a scratch CROWN_CONFIG_DIR; writes PNGs for manual inspection"]
 fn render_the_preview() {
-    let Some(dir) = std::env::var_os("CROWNSETTINGS_RENDER_DIR") else {
+    let (Some(dir), Some(desktop), Some(_)) = (
+        std::env::var_os("CROWNSETTINGS_RENDER_DIR"),
+        std::env::var("CROWNSETTINGS_RENDER_WALLPAPER").ok(),
+        std::env::var_os(crownos_config::CONFIG_DIR_ENV),
+    ) else {
         return;
     };
-    let wallpaper = crownos_config::load::<Appearance>(Appearance::SECTION).wallpaper;
-    for (shot, name) in [
-        (Shot::Warped, "warped"),
-        (Shot::Clock, "clock"),
-        (Shot::Password, "password"),
-        (Shot::RevealHalfway, "reveal-halfway"),
-    ] {
-        let wallpaper = wallpaper.clone();
+    let wanted = std::env::var("CROWNSETTINGS_RENDER_SHOTS").unwrap_or_default();
+    for shot in Shot::ALL {
+        if !wanted.is_empty() && !wanted.split(',').any(|name| name == shot.name()) {
+            continue;
+        }
+        let desktop = desktop.clone();
         let root = component(move |cx| {
             let store = Store::defaults(cx);
+            store.set(
+                cx,
+                crownos_config::schema::appearance::Wallpaper,
+                desktop.clone(),
+            );
+            store.set(cx, ClockKey, shot.look());
             let preview = Preview::start(cx, store);
             let state = preview.state;
-            let mut laid = Lock::default();
+            state.sheet.set(cx, shot.sheet());
             if let Shot::Warped = shot {
-                store.set(cx, ClockKey, warped_look());
                 state.edit_mode.set(cx, EditMode::Warp);
-                laid.clock = warped_look();
-                laid.clock.frame.warp = ClockFrame::default().warp;
             }
-            feed_studio(cx, state, laid, wallpaper.clone());
-            let lock = Lock::default();
+            if let Shot::Editor = shot {
+                state.hovering.set(cx, true);
+            }
+            let height = CANVAS_WIDTH * FALLBACK_OUTPUT[1] / FALLBACK_OUTPUT[0];
+            feed_studio(cx, state, Size::new(CANVAS_WIDTH, height));
             match shot {
-                Shot::Clock | Shot::Warped => {}
-                Shot::Password => state.handle(cx, Request::Show(Mode::Password)),
+                Shot::Password => state.show_mode(cx, Mode::Password),
                 Shot::RevealHalfway => {
-                    let now = Instant::now();
+                    let (lock, now) = (Default::default(), Instant::now());
                     let mut playback = Playback::new(&lock, now);
-                    playback.play(&lock, Moment::Reveal, now);
-                    let halfway = now
-                        + Duration::from_millis(u64::from(lock.transitions.reveal.duration_ms / 2));
-                    state.show(cx, playback.frame(halfway));
+                    playback.show(&lock, Mode::Password, now);
+                    state.show(cx, playback.frame(now + Spring::LOCK.settle_time() / 4));
                 }
+                _ => {}
             }
-            vstack(preview.card(cx)).w(WIDTH).p(24.0)
+            vstack(editor(cx, store, &preview)).w(WIDTH).p(24.0)
         });
-        let mut app = offscreen(root);
-        app.settle().expect("a frame renders");
-        let pixels = app.renderer_mut().read_pixels().expect("pixels read back");
-        let png = impeller::encode_png(&pixels).expect("PNG encodes");
-        std::fs::write(
-            std::path::Path::new(&dir).join(format!("lock-preview-{name}.png")),
-            png,
-        )
-        .expect("PNG written");
+        let name = format!("lock-preview-{}.png", shot.name());
+        render(
+            root,
+            Size::new(WIDTH, HEIGHT),
+            &std::path::Path::new(&dir).join(name),
+        );
     }
 }
 
-/// Paints the scene in-line, as the studio would, and hands the result over.
-fn feed_studio(cx: &mut crownui::prelude::Cx, state: super::State, laid: Lock, desktop: String) {
-    let width = CANVAS[0];
-    let height = width * FALLBACK_OUTPUT[1] / FALLBACK_OUTPUT[0];
-    let events = paint_now(
-        LayoutRequest {
-            scene: LockScene {
-                config: laid,
-                theme: Theme::default(),
-                ..LockScene::default()
-            },
-            output: FALLBACK_OUTPUT,
-            scale: width / FALLBACK_OUTPUT[0],
-        },
-        BackdropRequest {
-            desktop,
-            background: LockBackground::Desktop,
-            pixels: [width as u32, height as u32],
-            output: FALLBACK_OUTPUT.map(|side| side as u32),
-            blur: 1.0,
-            depth: None,
-            dim: 0.25,
-        },
+/// Writes `$CROWNSETTINGS_RENDER_DIR/lock-moment-<moment>.png`: the canvas
+/// alone, pixel for pixel as big as the `<width>x<height>` output
+/// `$CROWNSETTINGS_RENDER_OUTPUT` names, showing the settings in the scratch
+/// `CROWN_CONFIG_DIR` at rest on the clock — or on the prompt, with
+/// `$CROWNSETTINGS_RENDER_MOMENT=prompt` — to hold against what the lock
+/// screen draws on such an output. One moment per process.
+#[test]
+#[ignore = "needs a GPU and a scratch CROWN_CONFIG_DIR; writes a PNG to compare with the lock"]
+fn render_a_lock_moment() {
+    let (Some(dir), Some(output), Some(_)) = (
+        std::env::var_os("CROWNSETTINGS_RENDER_DIR"),
+        std::env::var("CROWNSETTINGS_RENDER_OUTPUT")
+            .ok()
+            .and_then(|size| parse_output(&size)),
+        std::env::var_os(crownos_config::CONFIG_DIR_ENV),
+    ) else {
+        return;
+    };
+    let prompt =
+        std::env::var("CROWNSETTINGS_RENDER_MOMENT").is_ok_and(|moment| moment == "prompt");
+    let size = Size::new(output[0] as f32, output[1] as f32);
+    let root = component(move |cx| {
+        let store = Store::load(cx);
+        store
+            .outputs
+            .update(cx, |outputs| outputs.monitors = vec![monitor(output)]);
+        let state = Preview::start(cx, store).state;
+        feed_studio(cx, state, size);
+        let moment = if prompt {
+            Moments::PROMPT
+        } else {
+            Moments::CLOCK
+        };
+        state.show(cx, moment.frame(0.0));
+        canvas(move |runtime, size, list| state.paint(runtime, size, list))
+            .w(size.width)
+            .h(size.height)
+    });
+    let name = format!(
+        "lock-moment-{}.png",
+        if prompt { "prompt" } else { "clock" }
     );
-    for event in events {
+    render(root, size, &std::path::Path::new(&dir).join(name));
+}
+
+/// `<width>x<height>`, in logical pixels.
+fn parse_output(size: &str) -> Option<[i32; 2]> {
+    let (width, height) = size.split_once('x')?;
+    Some([width.parse().ok()?, height.parse().ok()?])
+}
+
+/// One monitor showing `size` logical pixels at scale 1.
+fn monitor([width, height]: [i32; 2]) -> Monitor {
+    Monitor {
+        name: "render".to_owned(),
+        description: String::new(),
+        make: None,
+        model: None,
+        serial: None,
+        enabled: true,
+        modes: vec![OutputMode {
+            width,
+            height,
+            refresh: 60_000,
+            preferred: true,
+        }],
+        current_mode: Some(0),
+        position: (0, 0),
+        scale: 1.0,
+        transform: OutputTransform::Normal,
+        adaptive_sync: false,
+        vrr_capable: false,
+    }
+}
+
+/// Renders `root` offscreen at `size` and writes it to `path` as a PNG.
+fn render(root: impl View, size: Size, path: &std::path::Path) {
+    let mut app = offscreen(root, size);
+    app.settle().expect("a frame renders");
+    let pixels = app.renderer_mut().read_pixels().expect("pixels read back");
+    let png = impeller::encode_png(&pixels).expect("PNG encodes");
+    std::fs::write(path, png).expect("PNG written");
+}
+
+/// Paints what the preview would ask the studio for with a `size` canvas,
+/// in-line, and hands the result over.
+fn feed_studio(cx: &mut Cx, state: State, size: Size) {
+    state.size.set(cx, size);
+    let (Some(layout), Some(backdrop)) =
+        (state.layout_request(cx, None), state.backdrop_request(cx))
+    else {
+        return;
+    };
+    let thumbnails = Shelf::ALL.map(|shelf| state.thumbnail_request(cx, shelf));
+    let shown = cx.untrack(|runtime| state.shown_look(runtime).frame);
+    for event in paint_now(layout, shown, backdrop, thumbnails) {
         state.accept(cx, event);
     }
 }
 
-fn offscreen(root: impl crownui::prelude::View) -> InlineApp<ImpellerBackend, TaffyEngine> {
+fn offscreen(root: impl View, size: Size) -> InlineApp<ImpellerBackend, TaffyEngine> {
     let surface = Offscreen {
-        width: WIDTH as u32,
-        height: HEIGHT as u32,
+        width: size.width as u32,
+        height: size.height as u32,
         scale: 1.0,
     };
     let mut app = InlineApp::<ImpellerBackend, TaffyEngine>::with_surface(
         root,
         TaffyEngine::new(),
-        Size::new(WIDTH, HEIGHT),
+        size,
         1.0,
         &surface,
     )
@@ -154,68 +276,4 @@ fn offscreen(root: impl crownui::prelude::View) -> InlineApp<ImpellerBackend, Ta
         .register_font(inter_font().to_vec(), Some(INTER_FAMILY))
         .expect("Inter registers");
     app
-}
-
-/// Frame times while each transition plays in real time, sprites blurring
-/// as each radius is reached.
-///
-/// `cargo test --release profile_transitions -- --ignored --nocapture`
-#[test]
-#[ignore = "needs a GPU; prints frame times"]
-fn profile_transitions() {
-    const LONGEST_PLAY: Duration = Duration::from_secs(4);
-    let timers = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .expect("a timer runtime");
-    let _timers = timers.enter();
-    let wallpaper = crownos_config::load::<Appearance>(Appearance::SECTION).wallpaper;
-    let root = component(move |cx| {
-        let store = Store::defaults(cx);
-        let preview = Preview::start(cx, store);
-        let state = preview.state;
-        feed_studio(cx, state, Lock::default(), wallpaper.clone());
-        let plays: Vec<_> = Moment::ALL
-            .into_iter()
-            .map(|moment| {
-                crownui::kit::button(format!("Profile {}", moment.title()))
-                    .on_click(move |cx, _| state.handle(cx, Request::Play(moment)))
-            })
-            .collect();
-        vstack((preview.card(cx), crate::layout::inline(plays)))
-            .w(WIDTH)
-            .p(24.0)
-    });
-    let mut app = offscreen(root);
-    app.settle().expect("a frame renders");
-    for moment in Moment::ALL {
-        let name = format!("Profile {}", moment.title());
-        let play = crowntest::role(crowntest::Role::Button).name(&name);
-        let id = play
-            .find_one(app.ui().semantic_tree())
-            .expect("a play button per moment");
-        app.ui()
-            .perform(id, &semantics::UiAction::Click)
-            .expect("play clicks");
-        let started = Instant::now();
-        let mut frames = Vec::new();
-        while started.elapsed() < LONGEST_PLAY {
-            let begun = Instant::now();
-            let stats = app.frame_at(started.elapsed()).expect("a frame renders");
-            frames.push(begun.elapsed());
-            if !stats.animating && !app.ui().needs_frame() && !app.ui().wants_animation_frame() {
-                break;
-            }
-        }
-        frames.sort_unstable();
-        let millis = |duration: Duration| duration.as_secs_f64() * 1e3;
-        let count = frames.len();
-        println!(
-            "{name:<22} frames {count:>4}  p50 {:>6.2} ms  p95 {:>6.2} ms  max {:>6.2} ms  over 8 ms: {}",
-            millis(frames[count / 2]),
-            millis(frames[count * 95 / 100]),
-            millis(frames[count - 1]),
-            frames.iter().filter(|frame| millis(**frame) > 8.0).count(),
-        );
-    }
 }

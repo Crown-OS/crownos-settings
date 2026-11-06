@@ -153,7 +153,13 @@ fn write_all(pending: &mut HashMap<&'static str, Write>) {
 
 /// Saving is best effort: a read-only config directory should not take the
 /// window down, but it should not fail silently either.
+///
+/// A test only ever writes into a scratch `CROWN_CONFIG_DIR` it chose: one
+/// without would rewrite the user's own settings.
 fn write_now<S: Serialize>(section: &str, value: &S) {
+    if cfg!(test) && std::env::var_os(crownos_config::CONFIG_DIR_ENV).is_none() {
+        return;
+    }
     if let Err(err) = crownos_config::save(section, value) {
         eprintln!("crownsettings: could not save {section}.ron: {err}");
     }
