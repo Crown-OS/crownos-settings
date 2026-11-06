@@ -19,4 +19,4 @@ pub use row::{
     glyph, live_glyph, setting_row, setting_row_content, setting_row_desc, setting_row_icon,
     setting_row_icon_desc,
 };
-pub use text::{INLINE_GAP, headline, inline, paragraph, spread, value_text};
+pub use text::{INLINE_GAP, body_text, headline, inline, paragraph, spread, value_text};

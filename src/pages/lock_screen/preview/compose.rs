@@ -1,5 +1,6 @@
 //! The preview, drawn: what the compositor stacks on an output, scaled to
-//! the card.
+//! the card — the desktop, the lock's background and its darkening, the
+//! clock, the background's subject in front of it, and the prompt.
 
 use std::time::Instant;
 
@@ -8,12 +9,12 @@ use crownui::prelude::{BLACK, Color, CornerRadii, Point, Rect, Size, Vector};
 use lockscreen::clock::MORPH_BLUR;
 use lockscreen::flow::Frame;
 use lockscreen::layout::{Layer, Part};
-use lockscreen::transition::LayerStyle;
+use lockscreen::transition::{LayerStyle, PROMPT_BLUR};
 
 use super::backdrop::Backdrop;
-use super::editor::{ClockEdit, EditMode, handles, warped_image};
+use super::editor::{ClockEdit, EditMode, handles, mapped_rect, warped_image};
 use super::sprites::{Placed, SpriteSet};
-use super::studio::Slot;
+use super::studio::{DESKTOP_ZOOM, Slot};
 
 pub const CORNER_RADIUS: f32 = 12.0;
 
@@ -24,11 +25,13 @@ pub struct Look {
     /// That background is a flat color.
     pub fill: Option<Color>,
     pub dim: f32,
+    /// The background's subject stands in front of the clock.
+    pub depth: bool,
 }
 
 /// The clock as the editor has it.
 pub struct Clock<'a> {
-    /// The laid-out clock, shown with the frame being edited.
+    /// The laid-out clock, shown with the look being edited.
     pub edit: Option<&'a ClockEdit>,
     /// The handles to draw over it, if any.
     pub handles: Option<EditMode>,
@@ -50,78 +53,163 @@ pub fn compose(
     let bounds = Rect::new(Point::ZERO, size);
     list.save();
     list.clip(bounds, CornerRadii::uniform(CORNER_RADIUS));
-    background(list, bounds, look, backdrop, frame.backdrop);
-
+    background(list, bounds, look, backdrop, frame);
     let to_preview = size.width / output[0];
-    for (kind, style) in [(Layer::Clock, frame.clock), (Layer::Prompt, frame.prompt)] {
-        if kind == Layer::Prompt
-            && frame.clock.is_visible()
-            && let Some(depth) = backdrop.get(Slot::Depth)
-        {
-            layer(list, frame.clock.opacity, |list| {
-                list.image(depth.image, bounds)
-            });
-        }
-        if !style.is_visible() {
-            continue;
-        }
-        layer(list, style.opacity, |list| {
-            let [x, y] = style.offset.map(|offset| offset * to_preview);
-            list.transform(
-                Transform::scale(style.scale, style.scale)
-                    .about(bounds.center())
-                    .then(Transform::translate(Vector::new(x, y))),
-            );
-            for sprite in sprites.placed(kind, &style, clock.now) {
-                let shake = match sprite.part {
-                    Some(Part::SecureField) => frame.shake,
-                    _ => 0.0,
-                };
-                if sprite.morph == LayerStyle::REST {
-                    draw_sprite(
-                        list,
-                        &sprite,
-                        sprite.image,
-                        sprite.rect,
-                        shake,
-                        clock,
-                        to_preview,
-                    );
-                    continue;
-                }
-                morphing(list, &sprite, clock, to_preview);
-            }
+    sprite_layer(
+        list,
+        bounds,
+        Layer::Clock,
+        sprites,
+        frame,
+        clock,
+        to_preview,
+    );
+    if let Some(subject) = backdrop.get(Slot::Subject).filter(|_| look.depth) {
+        let style = frame.subject();
+        let fading = LayerStyle {
+            opacity: style.opacity * (1.0 - blurred_share(&style)),
+            ..style
+        };
+        wallpaper_layer(list, bounds, fading, |list| {
+            list.image(subject.image, look.lock_area(bounds));
         });
     }
+    sprite_layer(
+        list,
+        bounds,
+        Layer::Prompt,
+        sprites,
+        frame,
+        clock,
+        to_preview,
+    );
     if let (Some(edit), Some(mode)) = (clock.edit, clock.handles) {
         handles(list, edit, mode, to_preview);
     }
     list.restore();
 }
 
-/// What the lock is drawn over, its own background showing at `shown`.
-pub fn background(list: &mut DrawList, bounds: Rect, look: &Look, backdrop: &Backdrop, shown: f32) {
+/// What the lock is drawn over: black, as the compositor's floor, with the
+/// desktop showing only as the lock dissolves into it; the lock's background
+/// zoomed, faded and blurred as the frame has it; and the darkening over all.
+fn background(list: &mut DrawList, bounds: Rect, look: &Look, backdrop: &Backdrop, frame: &Frame) {
     list.fill(bounds, CornerRadii::ZERO, BLACK);
-    if let Some(desktop) = backdrop.get(Slot::Desktop) {
-        list.image(desktop.image, bounds);
+    let desktop = backdrop.get(Slot::Desktop);
+    if let Some(desktop) = desktop.filter(|_| frame.wallpaper.opacity < 1.0) {
+        list.image(desktop.image, zoomed(bounds, DESKTOP_ZOOM));
     }
-    if look.own_background {
-        layer(list, shown, |list| {
-            match (look.fill, backdrop.get(Slot::Lock)) {
-                (Some(color), _) => list.fill(bounds, CornerRadii::ZERO, color),
-                (None, Some(picture)) => list.image(picture.image, bounds),
-                (None, None) => {}
-            }
-        });
-    }
-    if let Some(blurred) = backdrop.get(Slot::Blurred) {
-        layer(list, shown, |list| list.image(blurred.image, bounds));
-    }
+    let picture = match look.own_background {
+        true => backdrop.get(Slot::Lock),
+        false => desktop,
+    };
+    let wallpaper = frame.wallpaper;
+    let blurred = blurred_share(&wallpaper);
+    let area = look.lock_area(bounds);
+    wallpaper_layer(list, bounds, wallpaper, |list| {
+        match (look.fill, picture) {
+            (Some(color), _) => list.fill(bounds, CornerRadii::ZERO, color),
+            (None, Some(picture)) => list.image(picture.image, area),
+            (None, None) => {}
+        }
+        if let Some(soft) = backdrop.get(Slot::Blurred).filter(|_| blurred > 0.0) {
+            layer(list, blurred, |list| list.image(soft.image, area));
+        }
+    });
     list.fill(
         bounds,
         CornerRadii::ZERO,
-        BLACK.with_alpha_factor(look.dim.clamp(0.0, 1.0) * shown),
+        BLACK.with_alpha_factor(frame.darkening(look.dim)),
     );
+}
+
+impl Look {
+    /// Where the lock's background and what is cut from it land: the
+    /// desktop wallpaper zoomed as crownpaper zooms it, a picture of the
+    /// lock's own covering the screen.
+    fn lock_area(&self, bounds: Rect) -> Rect {
+        match self.own_background {
+            true => bounds,
+            false => zoomed(bounds, DESKTOP_ZOOM),
+        }
+    }
+}
+
+/// `bounds` grown by `zoom` about its centre.
+fn zoomed(bounds: Rect, zoom: f32) -> Rect {
+    let size = Size::new(bounds.size.width * zoom, bounds.size.height * zoom);
+    let centre = bounds.center();
+    Rect::new(
+        Point::new(centre.x - size.width / 2.0, centre.y - size.height / 2.0),
+        size,
+    )
+}
+
+/// How far `style` has blurred the background, as a share of the prompt's
+/// blur: the sharp copy fades into the blurred one by it.
+fn blurred_share(style: &LayerStyle) -> f32 {
+    (style.blur / PROMPT_BLUR).clamp(0.0, 1.0)
+}
+
+/// `draw` at the background's place: zoomed about the output's centre and
+/// faded as `style` has it.
+fn wallpaper_layer(
+    list: &mut DrawList,
+    bounds: Rect,
+    style: LayerStyle,
+    draw: impl FnOnce(&mut DrawList),
+) {
+    if !style.is_visible() {
+        return;
+    }
+    layer(list, style.opacity, |list| {
+        list.transform(Transform::scale(style.scale, style.scale).about(bounds.center()));
+        draw(list);
+    });
+}
+
+fn sprite_layer(
+    list: &mut DrawList,
+    bounds: Rect,
+    kind: Layer,
+    sprites: &SpriteSet,
+    frame: &Frame,
+    clock: &Clock<'_>,
+    to_preview: f32,
+) {
+    let style = match kind {
+        Layer::Clock => frame.clock,
+        Layer::Prompt => frame.prompt,
+    };
+    if !style.is_visible() {
+        return;
+    }
+    layer(list, style.opacity, |list| {
+        let [x, y] = style.offset.map(|offset| offset * to_preview);
+        list.transform(
+            Transform::scale(style.scale, style.scale)
+                .about(bounds.center())
+                .then(Transform::translate(Vector::new(x, y))),
+        );
+        for sprite in sprites.placed(kind, &style, clock.now) {
+            let shake = match sprite.part {
+                Some(Part::SecureField) => frame.shake,
+                _ => 0.0,
+            };
+            if sprite.morph == LayerStyle::REST {
+                draw_sprite(
+                    list,
+                    &sprite,
+                    sprite.image,
+                    sprite.rect,
+                    shake,
+                    clock,
+                    to_preview,
+                );
+                continue;
+            }
+            morphing(list, &sprite, clock, to_preview);
+        }
+    });
 }
 
 /// A digit mid-change: scaled about its own centre, and crossing from sharp
@@ -164,7 +252,9 @@ fn morphing(list: &mut DrawList, sprite: &Placed, clock: &Clock<'_>, to_preview:
     }
 }
 
-/// `image` over `rect`, through the clock's edit when it is a clock glyph.
+/// `image` over `rect`, carried through the clock's edit when it is a clock
+/// glyph or the clock's date: one image while the edit only moves and
+/// scales them, cut to follow a warp.
 fn draw_sprite(
     list: &mut DrawList,
     sprite: &Placed,
@@ -174,11 +264,18 @@ fn draw_sprite(
     clock: &Clock<'_>,
     to_preview: f32,
 ) {
-    if let (Some(group), Some(edit)) = (sprite.clock_group(), clock.edit)
-        && !edit.is_identity()
-    {
-        warped_image(list, image, rect, &edit.map(group), to_preview);
-        return;
+    if let Some(edit) = clock.edit.filter(|edit| !edit.is_identity()) {
+        let map = match sprite.clock_group() {
+            Some(group) if edit.is_warped() => {
+                return warped_image(list, image, rect, &edit.map(group), to_preview);
+            }
+            Some(group) => Some(edit.map(group)),
+            None => sprite.date.then(|| edit.date_map()),
+        };
+        if let Some(moved) = map.and_then(|map| mapped_rect(rect, &map, to_preview)) {
+            list.image(image, moved);
+            return;
+        }
     }
     list.image(
         image,

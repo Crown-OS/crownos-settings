@@ -1,4 +1,4 @@
-use crownui::kit::{INTER_FAMILY, use_theme};
+use crownui::kit::{INTER_FAMILY, TEXT_SIZE, use_theme};
 use crownui::prelude::{IntoProp, Styled, View, ViewSeq, component, hstack, text};
 
 use crate::util::theme::tint;
@@ -18,6 +18,17 @@ pub fn value_text(content: impl IntoProp<String> + 'static) -> impl View {
             .text_size(VALUE_TEXT_SIZE)
             .font_family(INTER_FAMILY)
             .text_color(tint(theme, |theme| theme.text.muted))
+    })
+}
+
+/// A row-title-sized label for a control that sits inside a row of others.
+pub fn body_text(content: impl IntoProp<String> + 'static) -> impl View {
+    component(move |cx| {
+        let theme = use_theme(cx);
+        text(content)
+            .text_size(TEXT_SIZE)
+            .font_family(INTER_FAMILY)
+            .text_color(tint(theme, |theme| theme.text.body))
     })
 }
 

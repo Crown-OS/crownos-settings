@@ -1,27 +1,46 @@
-//! Small pictures of the clock in other looks, each drawn the way the lock
-//! screen would draw it — warp included — in one picture per look.
+//! Small pictures of the clock for the Clock & colour sheet, drawn by the
+//! lock screen's own layout and paint in one ink: each layout's clock and
+//! date in one window, placed as the layout places them, and each font as
+//! the hours alone.
 
-use lockscreen::clock::{ClockFace, Homography};
-use lockscreen::layout::{Layer, Live, Rect, Sprite};
+use chrono::{Local, TimeZone};
+use crownos_config::schema::ClockLayout;
+use lockscreen::clock::ClockFace;
+use lockscreen::layout::{ClockGroup, Content, Live, Part, Rect, Sprite};
 use lockscreen::lockscene::LockScene;
-use lockscreen::tiny_skia::{FilterQuality, Pixmap, PixmapPaint, Transform};
+use lockscreen::tiny_skia::{Pixmap, PixmapPaint, Transform};
 
 use super::{Picture, Studio, StudioEvent};
 
-/// Of the clock's height: the room left around a face.
-const FACE_MARGIN: f32 = 0.08;
+/// Of the hours' height: the room left around them on a font tile.
+const FONT_MARGIN: f32 = 0.12;
+/// Of the tallest clock's height: the room left around the clocks on the
+/// layout cards.
+const LAYOUT_MARGIN: f32 = 0.16;
+/// The moment every thumbnail reads, as ColorOS's own cards do: 09:41 on a
+/// Monday the 12th.
+const SAMPLE_DAY: (i32, u32, u32) = (2026, 10, 12);
+const SAMPLE_TIME: (u32, u32) = (9, 41);
 
-/// The two rows of thumbnails the page shows.
+/// The two rows of pictures the sheet shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shelf {
-    /// The whole clock screen, as it sits over the background.
-    Looks,
-    /// The clock's digits alone, cropped to them.
-    Faces,
+    /// The clock and date where each layout puts them on the screen.
+    Layouts,
+    /// The hours alone, cropped to them.
+    Fonts,
 }
 
 impl Shelf {
-    pub const ALL: [Self; 2] = [Self::Looks, Self::Faces];
+    pub const ALL: [Self; 2] = [Self::Layouts, Self::Fonts];
+
+    fn shows(self, sprite: &Sprite) -> bool {
+        let digit = matches!(&sprite.content, Content::Glyph(run) if run.paint.is_face());
+        match self {
+            Self::Layouts => digit || is_date(sprite),
+            Self::Fonts => digit && sprite.clock_group() == Some(ClockGroup::Hours),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,119 +49,152 @@ pub struct ThumbnailRequest {
     pub scenes: Vec<LockScene>,
     /// The output's logical size, which everything is laid out over.
     pub output: [f32; 2],
-    /// Thumbnail pixels per logical output pixel.
-    pub scale: f32,
+    /// Thumbnail pixels across each picture.
+    pub pixels: f32,
+    /// Straight RGBA everything is drawn in.
+    pub ink: [u8; 4],
+}
+
+/// Whether `sprite` is the clock's date.
+pub fn is_date(sprite: &Sprite) -> bool {
+    sprite.part == Some(Part::ClockDate)
 }
 
 impl Studio {
     pub(super) fn thumbnails(&mut self, request: &ThumbnailRequest) -> StudioEvent {
-        let painter = self.painter();
-        let pictures = request
+        let laid: Vec<_> = request
             .scenes
             .iter()
-            .map(|scene| {
-                let face = ClockFace::now(&scene.config);
-                let live = Live {
-                    face: &face,
-                    user: None,
-                    password_chars: 0,
-                    checking: false,
-                    notice: None,
-                    caps_lock: false,
-                };
-                let sprites: Vec<_> = painter
-                    .layout(scene, live, &(), request.output)
-                    .into_iter()
-                    .filter(|sprite| match request.shelf {
-                        Shelf::Looks => sprite.layer == Layer::Clock,
-                        Shelf::Faces => sprite.clock_group().is_some(),
-                    })
-                    .collect();
-                let clock = clock_box(&sprites)?;
+            .map(|scene| self.lay_out_thumbnail(request, scene))
+            .collect();
+        let window = common_window(&laid);
+        let pictures = laid
+            .iter()
+            .zip(&request.scenes)
+            .map(|(sprites, scene)| {
+                let clock = bounds(sprites)?;
                 let area = match request.shelf {
-                    Shelf::Looks => Rect {
-                        width: request.output[0],
-                        height: request.output[1],
-                        ..Rect::default()
-                    },
-                    Shelf::Faces => grown(clock, clock.height * FACE_MARGIN),
+                    Shelf::Layouts => placed(window?, clock, scene.config.clock.layout),
+                    Shelf::Fonts => grown(clock, clock.height * FONT_MARGIN),
                 };
-                let warp = warp_of(clock, scene.config.clock.frame.warp);
-                let mut canvas = Pixmap::new(
-                    (area.width * request.scale).ceil() as u32,
-                    (area.height * request.scale).ceil() as u32,
-                )?;
-                for sprite in &sprites {
-                    let pad = (sprite.reach() * request.scale).ceil();
-                    let Some(pixmap) = painter.paint(sprite, request.scale, pad as u32, &()) else {
-                        continue;
-                    };
-                    let bend = warp.filter(|_| sprite.clock_group().is_some());
-                    let Some(place) = placement(
-                        sprite.rect,
-                        pad / request.scale,
-                        area,
-                        request.scale,
-                        &pixmap,
-                        bend.as_ref(),
-                    ) else {
-                        continue;
-                    };
-                    canvas.draw_pixmap(0, 0, pixmap.as_ref(), &SMOOTH, place, None);
-                }
-                Some(Picture::of(&canvas))
+                self.draw_thumbnail(sprites, area, request)
+                    .as_ref()
+                    .map(Picture::of)
             })
             .collect();
         StudioEvent::Thumbnails(request.shelf, pictures)
     }
-}
 
-const SMOOTH: PixmapPaint = PixmapPaint {
-    opacity: 1.0,
-    blend_mode: lockscreen::tiny_skia::BlendMode::SourceOver,
-    quality: FilterQuality::Bilinear,
-};
-
-/// Where a sprite's padded pixmap lands on a canvas over `area`: bent through
-/// `warp` by the affine its own corners follow, which is close to the warp
-/// across anything as small as a digit.
-fn placement(
-    rect: Rect,
-    pad: f32,
-    area: Rect,
-    scale: f32,
-    pixmap: &Pixmap,
-    warp: Option<&Homography>,
-) -> Option<Transform> {
-    let (left, top) = (rect.x - pad, rect.y - pad);
-    let (right, bottom) = (rect.x + rect.width + pad, rect.y + rect.height + pad);
-    let on_canvas = |point: [f32; 2]| -> Option<[f32; 2]> {
-        let [x, y] = match warp {
-            Some(warp) => warp.apply(point)?,
-            None => point,
+    fn lay_out_thumbnail(&mut self, request: &ThumbnailRequest, scene: &LockScene) -> Vec<Sprite> {
+        let face = sample_face(scene);
+        let live = Live {
+            face: &face,
+            user: None,
+            password_chars: 0,
+            checking: false,
+            notice: None,
+            caps_lock: false,
         };
-        Some([(x - area.x) * scale, (y - area.y) * scale])
-    };
-    let origin = on_canvas([left, top])?;
-    let across = on_canvas([right, top])?;
-    let down = on_canvas([left, bottom])?;
-    let (width, height) = (pixmap.width() as f32, pixmap.height() as f32);
-    Some(Transform::from_row(
-        (across[0] - origin[0]) / width,
-        (across[1] - origin[1]) / width,
-        (down[0] - origin[0]) / height,
-        (down[1] - origin[1]) / height,
-        origin[0],
-        origin[1],
-    ))
+        self.painter()
+            .layout(scene, live, &(), request.output)
+            .into_iter()
+            .filter(|sprite| request.shelf.shows(sprite))
+            .collect()
+    }
+
+    /// `sprites` over `area`, `request.pixels` across, in the request's ink.
+    fn draw_thumbnail(
+        &mut self,
+        sprites: &[Sprite],
+        area: Rect,
+        request: &ThumbnailRequest,
+    ) -> Option<Pixmap> {
+        let scale = request.pixels / area.width;
+        let mut canvas = Pixmap::new(
+            request.pixels.ceil() as u32,
+            (area.height * scale).ceil() as u32,
+        )?;
+        let painter = self.painter();
+        for sprite in sprites {
+            let pad = (sprite.reach() * scale).ceil();
+            let Some(mut pixmap) = painter.paint(&sprite.as_coverage(), scale, pad as u32, &())
+            else {
+                continue;
+            };
+            ink(&mut pixmap, request.ink);
+            canvas.draw_pixmap(
+                ((sprite.rect.x - area.x) * scale - pad).round() as i32,
+                ((sprite.rect.y - area.y) * scale - pad).round() as i32,
+                pixmap.as_ref(),
+                &PixmapPaint::default(),
+                Transform::identity(),
+                None,
+            );
+        }
+        Some(canvas)
+    }
 }
 
-/// The box around the clock's digits, which the warp bends.
-fn clock_box(sprites: &[Sprite]) -> Option<Rect> {
-    let digits = sprites
-        .iter()
-        .filter(|sprite| sprite.clock_group().is_some());
-    let [left, top, right, bottom] = digits.fold(
+/// One window every layout's clock fits in, with room around it, so the
+/// cards share one shape and show the clocks at one size; and that room.
+fn common_window(laid: &[Vec<Sprite>]) -> Option<(Rect, f32)> {
+    let [width, height] = laid.iter().filter_map(|sprites| bounds(sprites)).fold(
+        None,
+        |widest: Option<[f32; 2]>, clock| {
+            let [width, height] = widest.unwrap_or_default();
+            Some([width.max(clock.width), height.max(clock.height)])
+        },
+    )?;
+    let margin = height * LAYOUT_MARGIN;
+    let window = Rect {
+        width: width + 2.0 * margin,
+        height: height + 2.0 * margin,
+        ..Rect::default()
+    };
+    Some((window, margin))
+}
+
+/// `window` over `clock`, `margin` clear of its top and aligned as `layout`
+/// aligns the clock on the screen.
+fn placed((window, margin): (Rect, f32), clock: Rect, layout: ClockLayout) -> Rect {
+    let x = match layout {
+        ClockLayout::Centered => clock.x + (clock.width - window.width) / 2.0,
+        ClockLayout::Left | ClockLayout::Stacked => clock.x - margin,
+    };
+    Rect {
+        x,
+        y: clock.y - margin,
+        ..window
+    }
+}
+
+/// The clock and date as `scene` would read them at the sample moment.
+fn sample_face(scene: &LockScene) -> ClockFace {
+    let (year, month, day) = SAMPLE_DAY;
+    let (hour, minute) = SAMPLE_TIME;
+    Local
+        .with_ymd_and_hms(year, month, day, hour, minute, 0)
+        .single()
+        .map_or_else(
+            || ClockFace::now(&scene.config),
+            |sample| ClockFace::at(&scene.config, sample),
+        )
+}
+
+/// Every premultiplied pixel of `pixmap` in `ink`, keeping its coverage.
+fn ink(pixmap: &mut Pixmap, ink: [u8; 4]) {
+    let opacity = u32::from(ink[3]);
+    for pixel in pixmap.data_mut().chunks_exact_mut(4) {
+        let alpha = (u32::from(pixel[3]) * opacity + 127) / 255;
+        for (channel, color) in pixel.iter_mut().zip(ink) {
+            *channel = ((u32::from(color) * alpha + 127) / 255) as u8;
+        }
+        pixel[3] = alpha as u8;
+    }
+}
+
+fn bounds(sprites: &[Sprite]) -> Option<Rect> {
+    let [left, top, right, bottom] = sprites.iter().fold(
         [f32::MAX, f32::MAX, f32::MIN, f32::MIN],
         |[left, top, right, bottom], sprite| {
             let rect = sprite.rect;
@@ -171,34 +223,16 @@ fn grown(rect: Rect, by: f32) -> Rect {
     }
 }
 
-/// The clock's box pulled by `warp`, as the compositor bends it.
-fn warp_of(clock: Rect, warp: [[f32; 2]; 4]) -> Option<Homography> {
-    if warp.iter().flatten().all(|pull| *pull == 0.0) {
-        return None;
-    }
-    let corners = [
-        [clock.x, clock.y],
-        [clock.x + clock.width, clock.y],
-        [clock.x + clock.width, clock.y + clock.height],
-        [clock.x, clock.y + clock.height],
-    ];
-    let quad = std::array::from_fn(|index| {
-        let ([x, y], [dx, dy]) = (corners[index], warp[index]);
-        [x + dx * clock.width, y + dy * clock.height]
-    });
-    Homography::box_to_quad([clock.x, clock.y], [clock.width, clock.height], quad)
-}
-
 #[cfg(test)]
 mod tests {
-    use crownos_config::schema::{ClockFont, Lock};
+    use crownos_config::schema::{ClockFont, ClockLayout, Lock};
 
     use super::*;
 
-    fn scene(font: ClockFont, warp: [[f32; 2]; 4]) -> LockScene {
+    fn scene(layout: ClockLayout, font: ClockFont) -> LockScene {
         let mut config = Lock::default();
+        config.clock.layout = layout;
         config.clock.font = font;
-        config.clock.frame.warp = warp;
         LockScene {
             config,
             ..LockScene::default()
@@ -207,17 +241,17 @@ mod tests {
 
     #[test]
     fn every_scene_gets_a_picture_cropped_for_its_shelf() {
-        let lean = [[0.14, 0.0], [0.14, 0.0], [0.0; 2], [0.0; 2]];
         let mut studio = Studio::default();
         for shelf in Shelf::ALL {
             let request = ThumbnailRequest {
                 shelf,
                 scenes: vec![
-                    scene(ClockFont::Tall, [[0.0; 2]; 4]),
-                    scene(ClockFont::Serif, lean),
+                    scene(ClockLayout::Centered, ClockFont::Sans),
+                    scene(ClockLayout::Stacked, ClockFont::Serif),
                 ],
                 output: [1920.0, 1080.0],
-                scale: 0.1,
+                pixels: 120.0,
+                ink: [20, 20, 20, 255],
             };
             let StudioEvent::Thumbnails(answered, pictures) = studio.thumbnails(&request) else {
                 panic!("thumbnails are answered with thumbnails");
@@ -225,12 +259,31 @@ mod tests {
             assert_eq!(answered, shelf);
             assert_eq!(pictures.len(), 2);
             let picture = pictures[0].as_ref().expect("painted");
-            let inked = picture.rgba.chunks(4).filter(|pixel| pixel[3] > 0).count();
-            assert!(inked > 0, "{shelf:?} draws the clock");
-            match shelf {
-                Shelf::Looks => assert_eq!(picture.width, 192),
-                Shelf::Faces => assert!(picture.width < 192),
+            let inked: Vec<_> = picture
+                .rgba
+                .chunks(4)
+                .filter(|pixel| pixel[3] > 0)
+                .collect();
+            assert!(!inked.is_empty(), "{shelf:?} draws the clock");
+            assert!(
+                inked
+                    .iter()
+                    .filter(|pixel| pixel[3] == u8::MAX)
+                    .all(|pixel| pixel[..3] == [20, 20, 20])
+            );
+            assert_eq!(picture.width, 120);
+            if shelf == Shelf::Layouts {
+                let stacked = pictures[1].as_ref().expect("painted");
+                assert_eq!(picture.height, stacked.height, "the cards share one shape");
             }
         }
+    }
+
+    #[test]
+    fn ink_keeps_coverage() {
+        let mut pixmap = Pixmap::new(1, 1).expect("size");
+        pixmap.data_mut().copy_from_slice(&[128, 128, 128, 128]);
+        ink(&mut pixmap, [255, 0, 0, 255]);
+        assert_eq!(pixmap.data(), &[128, 0, 0, 128]);
     }
 }

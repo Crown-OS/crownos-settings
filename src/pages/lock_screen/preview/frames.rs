@@ -1,39 +1,36 @@
-//! Turning studio results and play requests into frames on the canvas.
+//! Turning studio results and the mode switch into frames on the canvas.
 
 use std::time::Instant;
 
 use crownos_config::schema::Lock;
 use crownui::prelude::Cx;
 use lockscreen::flow::Frame;
+use lockscreen::tiny_skia::Pixmap;
 
-use super::playback::Playback;
+use super::State;
+use super::playback::{Mode, Playback};
 use super::sprites::SpriteSet;
 use super::studio::StudioEvent;
-use super::{Request, State, UNLOCKED_HOLD};
-use crate::pages::lock_screen::moment::Moment;
+use crate::util::signal::set_if_changed;
 use crate::util::texture::Texture;
 
 impl State {
     pub(super) fn accept(self, cx: &mut Cx, event: StudioEvent) {
         match event {
             StudioEvent::Sprites {
+                layout,
                 scale,
                 frame,
                 sprites,
             } => {
                 let now = Instant::now();
-                let mut uploaded = SpriteSet::upload(cx, scale, frame, sprites);
                 let mut replaced = SpriteSet::default();
                 self.sprites
                     .update(cx, |current| std::mem::swap(current, &mut replaced));
                 let was_morphing = replaced.is_morphing(now);
-                let morphs = cx.untrack(|runtime| {
-                    self.store
-                        .section(runtime, |lock: &Lock| lock.clock.morph_digits)
-                });
-                if morphs {
-                    uploaded.hand_over(cx, &mut replaced, now);
-                }
+                let mut uploaded =
+                    SpriteSet::upload(cx, (layout, scale, frame), sprites, &mut replaced);
+                uploaded.hand_over(cx, &mut replaced, now);
                 let morphing = uploaded.is_morphing(now);
                 self.sprites.set(cx, uploaded);
                 replaced.free(cx);
@@ -45,6 +42,7 @@ impl State {
                     self.show(cx, frame);
                 }
             }
+            StudioEvent::Frosted { layout, faces } => self.refrost(cx, layout, faces),
             StudioEvent::Picture(slot, picture) => {
                 let texture = picture.map(|picture| {
                     Texture::upload(cx, picture.width, picture.height, picture.rgba)
@@ -58,27 +56,46 @@ impl State {
             }
             StudioEvent::Thumbnails(shelf, pictures) => self.shelve(cx, shelf, pictures),
             StudioEvent::PictureUnreadable(unreadable) => {
-                if self
-                    .unreadable
-                    .with_untracked(cx, |current| *current != unreadable)
-                {
-                    self.unreadable.set(cx, unreadable);
-                }
+                set_if_changed(cx, self.unreadable, unreadable);
             }
+            StudioEvent::Depth(depth) => set_if_changed(cx, self.depth, depth),
         }
     }
 
-    pub(super) fn handle(self, cx: &mut Cx, request: Request) {
+    /// Swaps in glass faces frosted again for where the clock is shown, if
+    /// they are of the layout on the canvas.
+    fn refrost(self, cx: &mut Cx, layout: u64, faces: Vec<(u64, Pixmap)>) {
+        if !self
+            .sprites
+            .with_untracked(cx, |sprites| sprites.is_layout(layout))
+        {
+            return;
+        }
+        let made = faces
+            .into_iter()
+            .map(|(id, pixmap)| {
+                let texture = Texture::from_pixmap(cx, &pixmap);
+                (id, pixmap, texture)
+            })
+            .collect();
+        let mut unused = Vec::new();
+        self.sprites
+            .update(cx, |sprites| unused = sprites.refrost(made));
+        for texture in unused {
+            texture.free(cx);
+        }
+        let frame = self.frame.with_untracked(cx, |frame| *frame);
+        self.show(cx, frame);
+    }
+
+    /// Plays the lock's own animation toward `mode`.
+    pub(super) fn show_mode(self, cx: &mut Cx, mode: Mode) {
         let now = Instant::now();
         let lock = cx.untrack(|runtime| self.store.section(runtime, Lock::clone));
-        self.playback.update(cx, |playback| match request {
-            Request::Play(moment) => playback.play(&lock, moment, now),
-            Request::Show(mode) => playback.show(&lock, mode, now),
-        });
+        self.playback
+            .update(cx, |playback| playback.show(&lock, mode, now));
         let mode = self.playback.with_untracked(cx, Playback::mode);
-        if self.mode.with_untracked(cx, |current| *current != mode) {
-            self.mode.set(cx, mode);
-        }
+        set_if_changed(cx, self.mode, mode);
         if !self.animating.with_untracked(cx, |animating| *animating) {
             self.animating.set(cx, true);
             self.tick(cx);
@@ -88,15 +105,9 @@ impl State {
     /// One frame of whatever is playing, and the next while it lasts.
     fn tick(self, cx: &mut Cx) {
         let now = Instant::now();
-        let (frame, animating, unlocked, generation) =
-            self.playback.with_untracked(cx, |playback| {
-                (
-                    playback.frame(now),
-                    playback.is_animating(now),
-                    playback.is_unlocked(now),
-                    playback.generation(),
-                )
-            });
+        let (frame, animating) = self.playback.with_untracked(cx, |playback| {
+            (playback.frame(now), playback.is_animating(now))
+        });
         self.show(cx, frame);
         if animating {
             cx.request_animation_frame(move |cx, _| self.tick(cx));
@@ -108,14 +119,6 @@ impl State {
             .update(cx, |sprites| unused = sprites.unused(&frame));
         for texture in unused {
             texture.free(cx);
-        }
-        if unlocked {
-            cx.spawn(tokio::time::sleep(UNLOCKED_HOLD), move |cx, ()| {
-                let current = self.playback.with_untracked(cx, Playback::generation);
-                if current == generation {
-                    self.handle(cx, Request::Play(Moment::Appear));
-                }
-            });
         }
     }
 
@@ -150,8 +153,6 @@ impl State {
                 .collect();
             self.sprites.update(cx, |sprites| sprites.adopt(made));
         }
-        if self.frame.with_untracked(cx, |current| *current != frame) {
-            self.frame.set(cx, frame);
-        }
+        set_if_changed(cx, self.frame, frame);
     }
 }

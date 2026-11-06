@@ -5,6 +5,7 @@
 //! a handful of them and each is blurred once, not once per frame. A clock
 //! digit that changes keeps one softened copy of itself and of the digit it
 //! replaces, and the two cross between sharp and soft as they trade places.
+//! A sprite the studio did not paint again keeps its textures.
 
 use std::time::Instant;
 
@@ -27,6 +28,8 @@ const BLUR_REACH: u32 = 3;
 
 #[derive(Default)]
 pub struct SpriteSet {
+    /// Which of the studio's layouts this is.
+    layout: u64,
     /// Preview pixels per logical output pixel.
     scale: f32,
     /// What the clock was laid out with.
@@ -45,6 +48,7 @@ struct Sprite {
     soft: Option<Texture>,
     layer: Layer,
     part: Option<Part>,
+    date: bool,
     /// Where the content sits, without its padding, in logical output pixels.
     rect: lockscreen::layout::Rect,
     /// Snapped to whole preview pixels, in logical output pixels: the
@@ -63,6 +67,8 @@ pub type Pending = (usize, u32, Pixmap);
 pub struct Placed {
     pub image: ImageId,
     pub part: Option<Part>,
+    /// The clock's date, which moves with the clock.
+    pub date: bool,
     /// Logical output pixels.
     pub rect: Rect,
     /// How a morphing digit is drawn on top of its layer's style.
@@ -87,30 +93,88 @@ pub fn quantized(blur: f32, scale: f32) -> u32 {
 }
 
 impl SpriteSet {
-    pub fn upload(cx: &mut Cx, scale: f32, frame: ClockFrame, painted: Vec<Painted>) -> Self {
+    /// Layout `layout`'s sprites, taking from `old` those the studio did
+    /// not paint again.
+    pub fn upload(
+        cx: &mut Cx,
+        (layout, scale, frame): (u64, f32, ClockFrame),
+        painted: Vec<Painted>,
+        old: &mut SpriteSet,
+    ) -> Self {
         let sprites = painted
             .into_iter()
-            .map(|painted| Sprite {
-                id: painted.id,
-                glyph: painted.glyph,
-                born: None,
-                soft: None,
-                layer: painted.layer,
-                part: painted.part,
-                rect: painted.rect,
-                origin: [painted.rect.x, painted.rect.y]
-                    .map(|at| ((at - painted.pad) * scale).round() / scale),
-                sharp: Texture::from_pixmap(cx, &painted.pixmap),
-                pixmap: painted.pixmap,
-                blurred: Vec::new(),
+            .filter_map(|painted| {
+                let Painted {
+                    id,
+                    layer,
+                    part,
+                    date,
+                    rect,
+                    pad,
+                    glyph,
+                    pixmap,
+                } = painted;
+                let origin = rect.padded_origin(scale, pad * scale).map(|at| at / scale);
+                let kept = match pixmap {
+                    Some(pixmap) => Sprite {
+                        id,
+                        glyph,
+                        born: None,
+                        soft: None,
+                        layer,
+                        part,
+                        date,
+                        rect,
+                        origin,
+                        sharp: Texture::from_pixmap(cx, &pixmap),
+                        pixmap,
+                        blurred: Vec::new(),
+                    },
+                    None => old.take(id)?,
+                };
+                Some(Sprite {
+                    layer,
+                    part,
+                    date,
+                    rect,
+                    origin,
+                    ..kept
+                })
             })
             .collect();
         Self {
+            layout,
             scale,
             frame,
             sprites,
             leaving: Vec::new(),
         }
+    }
+
+    /// Takes out the sprite `id`.
+    fn take(&mut self, id: u64) -> Option<Sprite> {
+        let index = self.sprites.iter().position(|sprite| sprite.id == id)?;
+        Some(self.sprites.swap_remove(index))
+    }
+
+    pub fn is_layout(&self, layout: u64) -> bool {
+        self.layout == layout
+    }
+
+    /// Puts glass faces frosted again in place of the ones shown, handing
+    /// back every texture this lets go of.
+    pub fn refrost(&mut self, faces: Vec<(u64, Pixmap, Texture)>) -> Vec<Texture> {
+        let mut unused = Vec::new();
+        for (id, pixmap, sharp) in faces {
+            let Some(sprite) = self.sprites.iter_mut().find(|sprite| sprite.id == id) else {
+                unused.push(sharp);
+                continue;
+            };
+            unused.push(std::mem::replace(&mut sprite.sharp, sharp));
+            unused.extend(sprite.blurred.drain(..).map(|(_, texture)| texture));
+            sprite.pixmap = pixmap;
+        }
+        unused
     }
 
     /// Takes from `old` every digit this set shows another in place of, to
@@ -172,6 +236,14 @@ impl SpriteSet {
             Some(Part::ClockGlyph(group)) => Some((group, sprite.rect)),
             _ => None,
         })
+    }
+
+    /// Where the clock's date sits, in logical output pixels.
+    pub fn clock_date(&self) -> Option<lockscreen::layout::Rect> {
+        self.sprites
+            .iter()
+            .find(|sprite| sprite.date)
+            .map(|sprite| sprite.rect)
     }
 
     pub fn free(self, runtime: &mut Runtime) {
@@ -279,6 +351,7 @@ impl SpriteSet {
         Placed {
             image: texture.image,
             part: sprite.part,
+            date: sprite.date,
             rect: rect(texture, pad),
             morph,
             soft: sprite
