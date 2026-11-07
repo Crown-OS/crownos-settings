@@ -24,6 +24,7 @@ mod screenshot;
 mod sound;
 mod voice;
 mod wifi;
+mod windows_apps;
 
 use crownui::prelude::{AnyView, Cx, View, ViewSeq};
 
@@ -84,6 +85,7 @@ pub static GROUPS: &[PageGroup] = &[
             keybinds::PAGE,
             notifications::PAGE,
             screenshot::PAGE,
+            windows_apps::PAGE,
             power::PAGE,
         ],
     },
