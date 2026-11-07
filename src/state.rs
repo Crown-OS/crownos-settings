@@ -119,6 +119,11 @@ impl Store {
         self.config.get(runtime, key)
     }
 
+    /// Edit a section and persist it. See [`Settings::update`].
+    pub fn update<S: Section>(self, runtime: &mut Runtime, edit: impl FnOnce(&mut S)) {
+        self.config.update(runtime, edit);
+    }
+
     /// Write one key and persist its section. See [`Settings::set`].
     pub fn set<K: Key>(self, runtime: &mut Runtime, key: K, value: K::Value)
     where

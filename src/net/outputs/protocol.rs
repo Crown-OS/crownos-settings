@@ -41,9 +41,6 @@ use super::{Mode, Monitor, MonitorDraft, Outcome, OutputEvent, Transform};
 /// The newest manager version this client can speak. 4 adds adaptive sync.
 const VERSION: std::ops::RangeInclusive<u32> = 1..=4;
 
-/// Everything a configuration needs that only a version 4 manager has.
-const ADAPTIVE_SYNC_SINCE: u32 = 4;
-
 /// One live conversation with the compositor's output manager.
 pub struct Session {
     connection: Connection,
@@ -115,7 +112,6 @@ impl Session {
 
         let qh = self.queue.handle();
         let configuration = self.manager.create_configuration(serial, &qh, ());
-        let adaptive_sync = self.manager.version() >= ADAPTIVE_SYNC_SINCE;
 
         for (handle, head) in &self.state.heads {
             // A head with no draft keeps what it has, being off included:
@@ -140,14 +136,6 @@ impl Session {
                 && let Some((mode, _)) = head.modes.get(index)
             {
                 configured.set_mode(mode);
-            }
-
-            if adaptive_sync && head.adaptive_sync.is_some() {
-                configured.set_adaptive_sync(if draft.adaptive_sync {
-                    zwlr_output_head_v1::AdaptiveSyncState::Enabled
-                } else {
-                    zwlr_output_head_v1::AdaptiveSyncState::Disabled
-                });
             }
         }
 
@@ -265,8 +253,7 @@ impl State {
                 position: head.position,
                 scale: head.scale,
                 transform: head.transform,
-                adaptive_sync: head.adaptive_sync.unwrap_or(false),
-                vrr_capable: head.adaptive_sync.is_some(),
+                vrr_capable: head.vrr_capable,
             })
             .collect()
     }
@@ -285,11 +272,11 @@ struct Head {
     position: (i32, i32),
     scale: f64,
     transform: Transform,
-    /// `None` until the head says so, which a compositor only does for a head
-    /// whose connector can actually do it — the protocol has no capability
-    /// event, so the presence of this one is the whole signal, and it is what
-    /// decides whether the page offers the toggle at all.
-    adaptive_sync: Option<bool>,
+    /// Whether the head said anything about adaptive sync, which a compositor
+    /// only does for a head whose connector can actually do it — the protocol
+    /// has no capability event, so the presence of this one is the whole
+    /// signal, and it is what decides whether the page offers the setting.
+    vrr_capable: bool,
 }
 
 // --- MARK: Dispatch ---
@@ -369,12 +356,7 @@ impl Dispatch<ZwlrOutputHeadV1, ()> for State {
             zwlr_output_head_v1::Event::Transform { transform } => {
                 head.transform = transform_from_wire(transform);
             }
-            zwlr_output_head_v1::Event::AdaptiveSync { state: sync } => {
-                head.adaptive_sync = Some(matches!(
-                    sync,
-                    WEnum::Value(zwlr_output_head_v1::AdaptiveSyncState::Enabled)
-                ));
-            }
+            zwlr_output_head_v1::Event::AdaptiveSync { .. } => head.vrr_capable = true,
             _ => {}
         }
     }

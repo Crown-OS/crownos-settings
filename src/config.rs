@@ -23,8 +23,8 @@ use std::fmt::Debug;
 use crownconfig::{SectionWatch, watch_section};
 use crownos_config::Key;
 use crownos_config::schema::{
-    Appearance, Bluetooth, Display, Glass, Input, Keybinds, Lock, Notifications, Power, Screenshot,
-    Sound, Theme, Voice, Wifi,
+    Appearance, Bluetooth, Compositor, Display, Glass, Input, Keybinds, Lock, Notifications, Power,
+    Screenshot, Sound, Theme, Voice, Wifi,
 };
 use crownui::prelude::{Cx, Runtime, Signal};
 use serde::Serialize;
@@ -184,6 +184,7 @@ sections! {
     lock: Lock,
     theme: Theme,
     screenshot: Screenshot,
+    compositor: Compositor,
 }
 
 #[cfg(test)]
