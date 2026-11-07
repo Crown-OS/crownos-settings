@@ -10,6 +10,7 @@
 //! the registered pages belong to the plugin settings pages, which the sidebar
 //! lists from the live plugin list.
 
+mod accounts;
 mod appearance;
 mod bluetooth;
 mod cross_device;
@@ -66,7 +67,12 @@ pub struct PageGroup {
 pub static GROUPS: &[PageGroup] = &[
     PageGroup {
         label: "Connectivity",
-        pages: &[wifi::PAGE, bluetooth::PAGE, cross_device::PAGE],
+        pages: &[
+            wifi::PAGE,
+            bluetooth::PAGE,
+            cross_device::PAGE,
+            accounts::PAGE,
+        ],
     },
     PageGroup {
         label: "Personalization",
