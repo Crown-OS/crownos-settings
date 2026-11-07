@@ -18,6 +18,7 @@ mod input;
 mod keybinds;
 mod lock_screen;
 mod notifications;
+mod performance;
 mod plugins;
 mod power;
 mod screenshot;
@@ -86,6 +87,7 @@ pub static GROUPS: &[PageGroup] = &[
             notifications::PAGE,
             screenshot::PAGE,
             windows_apps::PAGE,
+            performance::PAGE,
             power::PAGE,
         ],
     },
