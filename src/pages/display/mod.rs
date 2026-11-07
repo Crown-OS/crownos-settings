@@ -9,7 +9,10 @@
 //!   out as one atomic configuration rather than a field at a time.
 //! * [`light`] is a *preference* in `display.ron`, like every other page's
 //!   controls. The compositor turns it into a gamma ramp.
+//! * [`adaptive_sync`] is a preference too, in `compositor.ron`, because the
+//!   protocol has no word for "only while a game is showing".
 
+mod adaptive_sync;
 mod light;
 mod monitors;
 mod selected;
@@ -25,7 +28,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Display",
     slug: "display",
     icon: icons::MONITOR,
-    keywords: &[],
+    keywords: &["adaptive sync", "vrr", "freesync", "variable refresh rate"],
     build,
 };
 

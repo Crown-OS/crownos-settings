@@ -227,7 +227,6 @@ fn monitor([width, height]: [i32; 2]) -> Monitor {
         position: (0, 0),
         scale: 1.0,
         transform: OutputTransform::Normal,
-        adaptive_sync: false,
         vrr_capable: false,
     }
 }

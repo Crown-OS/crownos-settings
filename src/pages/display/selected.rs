@@ -1,5 +1,6 @@
 //! Resolution, refresh, scale, orientation and adaptive sync, for the one
-//! monitor the user picked out of the list.
+//! monitor the user picked out of the list. Adaptive sync is the odd one out:
+//! see [`adaptive_sync`](super::adaptive_sync).
 //!
 //! Every choice here is offered as a list of rows, and every one of those
 //! lists has the same rule: whatever the monitor is *actually* on gets a row,
@@ -7,12 +8,11 @@
 //! nothing highlighted is how a user finds out their monitor is on a setting
 //! the page cannot name, and then cannot get back to it.
 
-use crownui::kit::{select, toggle};
+use crownui::kit::select;
 use crownui::prelude::{Cx, IntoProp, Runtime, Semantic, Signal, View, bind, vstack};
 
-use crate::layout::{
-    optional, setting_row, setting_row_desc, settings_card_titled, settings_divider, when,
-};
+use super::adaptive_sync::{self, OutputNames};
+use crate::layout::{optional, setting_row, settings_card_titled, settings_divider, when};
 use crate::net::outputs::{MonitorDraft, OutputState, Transform};
 use crate::state::Store;
 use crate::util::bridge::{bridge, derived};
@@ -31,6 +31,7 @@ struct Selection {
     title: String,
     modes: Vec<String>,
     vrr_capable: bool,
+    output_names: OutputNames,
 }
 
 fn selection(outputs: &OutputState) -> Option<Selection> {
@@ -41,6 +42,7 @@ fn selection(outputs: &OutputState) -> Option<Selection> {
         title: monitor.title(),
         modes: monitor.modes.iter().map(|mode| mode.label()).collect(),
         vrr_capable: monitor.vrr_capable,
+        output_names: OutputNames::of(monitor),
         name,
     })
 }
@@ -55,6 +57,7 @@ pub fn card(store: Store) -> impl View {
                 title,
                 modes,
                 vrr_capable,
+                output_names,
             } = selected;
             let draft = Draft { outputs, name };
             settings_card_titled(
@@ -68,7 +71,10 @@ pub fn card(store: Store) -> impl View {
                     when(
                         move |_| vrr_capable,
                         move |cx| {
-                            vstack((settings_divider(), adaptive_sync_row(cx, draft.clone())))
+                            vstack((
+                                settings_divider(),
+                                adaptive_sync::row(cx, store, output_names.clone(), draft.off()),
+                            ))
                         },
                     ),
                 ),
@@ -171,23 +177,6 @@ fn orientation(cx: &mut Cx, draft: Draft) -> impl View + use<> {
         },
     );
     select(labels, selected).disabled(draft.off())
-}
-
-/// Only offered for a monitor the compositor said something about adaptive
-/// sync for — the protocol has no capability event, so its silence is how a
-/// connector that cannot do it says so.
-fn adaptive_sync_row(cx: &mut Cx, draft: Draft) -> impl View + use<> {
-    let (reading, editing) = (draft.clone(), draft.clone());
-    let on = bridge(
-        cx,
-        move |runtime| reading.read(runtime, |draft| draft.adaptive_sync),
-        move |runtime, on| editing.edit(runtime, |draft| draft.adaptive_sync = on),
-    );
-    setting_row_desc(
-        "Adaptive sync",
-        "Match the refresh rate to what is being drawn",
-        toggle(on).disabled(draft.off()),
-    )
 }
 
 /// [`SCALES`], plus whatever the monitor is on when that is not one of them.

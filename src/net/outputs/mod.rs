@@ -133,9 +133,8 @@ pub struct Monitor {
     pub position: (i32, i32),
     pub scale: f64,
     pub transform: Transform,
-    pub adaptive_sync: bool,
     /// Whether the compositor said anything about adaptive sync at all, which
-    /// is what decides if the toggle is offered.
+    /// is what decides if the setting is offered.
     pub vrr_capable: bool,
 }
 
@@ -162,7 +161,6 @@ impl Monitor {
             position: self.position,
             scale: self.scale,
             transform: self.transform,
-            adaptive_sync: self.adaptive_sync,
         }
     }
 
@@ -208,7 +206,6 @@ pub struct MonitorDraft {
     pub position: (i32, i32),
     pub scale: f64,
     pub transform: Transform,
-    pub adaptive_sync: bool,
 }
 
 impl MonitorDraft {
@@ -619,7 +616,6 @@ mod tests {
             position,
             scale: 2.0,
             transform: Transform::Normal,
-            adaptive_sync: false,
             vrr_capable: true,
         }
     }
@@ -861,7 +857,7 @@ mod tests {
     fn an_arrangement_that_still_works_is_left_alone() {
         let mut state = loaded(vec![monitor("DP-1", (0, 0)), monitor("DP-2", (4000, 500))]);
 
-        state.edit("DP-1", |draft| draft.adaptive_sync = true);
+        state.edit("DP-1", |draft| draft.transform = Transform::Rotate180);
 
         assert_eq!(
             state.draft("DP-2").map(|draft| draft.position),

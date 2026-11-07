@@ -110,7 +110,6 @@ pub(super) fn populate(cx: &mut Cx, store: Store) {
         position: (0, 0),
         scale: 1.5,
         transform: Transform::Normal,
-        adaptive_sync: false,
         vrr_capable: true,
     };
     store.outputs.update(cx, |outputs| {
