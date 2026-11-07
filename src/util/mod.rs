@@ -5,6 +5,7 @@ pub mod affine;
 pub mod alloc_count;
 pub mod bento;
 pub mod bridge;
+pub mod browser;
 pub mod clock;
 pub mod deadline;
 pub mod follow_watch;

@@ -28,6 +28,10 @@ crownpaper = { path = "../crownpaper", default-features = false }
 # crown-voiced's own declaration of its protocol, for the Voice page's status
 # row. The schema alone; the daemon's audio stack is not built here.
 voice-protocol = { package = "crownos-voice-protocol", path = "../crownos-voice/crates/voice-protocol" }
+# The online accounts the home widgets read — Spotify for the music widget,
+# Google for the calendar. This app signs in and out; the tokens live in a
+# file only the user can read, which the widgets refresh on their own.
+crownos-accounts = { path = "../crownos-home/crates/accounts" }
 # The crownplugind contract, for the Plugins & Themes page. The daemon is the
 # only writer of `plugins.ron`; this app asks it over IPC.
 crownplugin-proto = { path = "../crownos-plugins/proto" }
