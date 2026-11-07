@@ -38,6 +38,7 @@
 
 pub mod audio;
 pub mod crownconnect;
+pub mod memory;
 pub mod outputs;
 pub mod plugins;
 pub mod voice;

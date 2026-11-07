@@ -1,6 +1,6 @@
 use crownos_config::Key;
 use crownui::kit::{SliderKind, SliderOptions, slider};
-use crownui::prelude::{Cx, Element, Styled};
+use crownui::prelude::{Cx, Element, Signal, Styled};
 
 use crate::config::Section;
 use crate::state::Store;
@@ -63,6 +63,16 @@ where
     scaled(cx, store, key, 100.0)
 }
 
+/// A slider over `min..=max` in `step`s, editing a page's own signal rather
+/// than a stored key: for values that only change once the user confirms.
+pub fn stepped_slider(value: Signal<f32>, min: f32, max: f32, step: f32) -> Element<SliderKind> {
+    sized(slider(value).range(min, max).step(step))
+}
+
+fn sized(slider: Element<SliderKind>) -> Element<SliderKind> {
+    slider.basis(SLIDER_WIDTH).shrink(SLIDER_SHRINK)
+}
+
 fn scaled<K>(cx: &mut Cx, store: Store, key: K, factor: f64) -> Element<SliderKind>
 where
     K: Key,
@@ -76,8 +86,5 @@ where
             store.set(runtime, key, Stored::narrow(f64::from(shown) / factor));
         },
     );
-    slider(value)
-        .range(PERCENT.0, PERCENT.1)
-        .basis(SLIDER_WIDTH)
-        .shrink(SLIDER_SHRINK)
+    sized(slider(value).range(PERCENT.0, PERCENT.1))
 }
