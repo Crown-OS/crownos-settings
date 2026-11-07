@@ -43,3 +43,4 @@ pub mod plugins;
 pub mod voice;
 pub mod wallpaper;
 pub mod wifi;
+pub mod windows_apps;
