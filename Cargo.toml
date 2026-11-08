@@ -31,7 +31,7 @@ voice-protocol = { package = "crownos-voice-protocol", path = "../crownos-voice/
 # The online accounts the home widgets read — Spotify for the music widget,
 # Google for the calendar. This app signs in and out; the tokens live in a
 # file only the user can read, which the widgets refresh on their own.
-crownos-accounts = { path = "../crownos-home/crates/accounts" }
+crownos-accounts = { path = "../crownos-accounts" }
 # The crownplugind contract, for the Plugins & Themes page. The daemon is the
 # only writer of `plugins.ron`; this app asks it over IPC.
 crownplugin-proto = { path = "../crownos-plugins/proto" }

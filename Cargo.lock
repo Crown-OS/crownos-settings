@@ -3298,6 +3298,7 @@ dependencies = [
  "layouting",
  "motion",
  "reactive",
+ "rustc-hash 2.1.3",
  "semantics",
  "slotmap",
  "smallvec",
