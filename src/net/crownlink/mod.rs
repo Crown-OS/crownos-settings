@@ -1,4 +1,4 @@
-//! The cross-device backend: the crownconnect daemon, which pairs, links and
+//! The cross-device backend: the crownlink daemon, which pairs, links and
 //! syncs this computer with phones, tablets and other computers.
 //!
 //! The house shape (see [`crate::net`]): [`CrossDeviceCommand`] for everything
@@ -13,14 +13,14 @@ mod daemon;
 mod state;
 mod worker;
 
-pub use crownconnect_linux::ipc::proto::{
+pub use crownlink_linux::ipc::proto::{
     Battery, DeviceClass, DeviceId, DeviceInfo, Edge, Feature, FeatureSet, FeatureState, LinkKind,
 };
 #[cfg(test)]
 pub use state::PairingPrompt;
 pub use state::{CrossDeviceState, Device, Link, PairingInvite, PairingOutcome, PairingSession};
 
-use crownconnect_linux::ipc::proto;
+use crownlink_linux::ipc::proto;
 use crownui::prelude::{Cx, Signal};
 
 use crate::util::worker::spawn_worker;
@@ -79,7 +79,7 @@ pub enum CrossDeviceEvent {
 
 /// Starts the cross-device backend for as long as the calling component
 /// lives — the window.
-pub fn crownconnect_worker(cx: &mut Cx, cross_device: Signal<CrossDeviceState>) {
+pub fn crownlink_worker(cx: &mut Cx, cross_device: Signal<CrossDeviceState>) {
     let sender = spawn_worker(cx, worker::run, move |cx, event| {
         cross_device.update(cx, |state| state.apply(event));
     });

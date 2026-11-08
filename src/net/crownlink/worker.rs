@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crownconnect_linux::ipc::proto;
+use crownlink_linux::ipc::proto;
 use crownos_ipc::Error as IpcError;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::{Instant, sleep_until};

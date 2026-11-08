@@ -5,7 +5,7 @@
 //! Plugins & Themes page and the plugin settings pages can ask,
 //! [`PluginsEvent`] for everything the daemon can say, and [`PluginsState`] in
 //! the [`Store`](crate::state::Store). The daemon's schema types are
-//! re-exported rather than mirrored, like crownconnect's.
+//! re-exported rather than mirrored, like crownlink's.
 
 mod daemon;
 mod state;

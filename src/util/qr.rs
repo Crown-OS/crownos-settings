@@ -73,7 +73,7 @@ mod tests {
     use super::*;
 
     fn symbol() -> QrMatrix {
-        QrMatrix::encode("crownconnect://pair?k=abc").expect("short text always encodes")
+        QrMatrix::encode("crownlink://pair?k=abc").expect("short text always encodes")
     }
 
     #[test]

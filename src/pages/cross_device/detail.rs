@@ -17,7 +17,7 @@ use crate::layout::{
     setting_row_icon_desc, settings_card, settings_card_titled, settings_divider, spread,
     value_text, when,
 };
-use crate::net::crownconnect::{CrossDeviceState, Device, DeviceId, Feature};
+use crate::net::crownlink::{CrossDeviceState, Device, DeviceId, Feature};
 use crate::util::bridge::bridge;
 use crate::util::theme::tint;
 

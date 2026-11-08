@@ -28,7 +28,7 @@ use crownui::prelude::{Cx, Runtime, Signal};
 
 use crate::config::{Section, Settings};
 use crate::net::audio::{Microphones, follow_microphones};
-use crate::net::crownconnect::{CrossDeviceState, crownconnect_worker};
+use crate::net::crownlink::{CrossDeviceState, crownlink_worker};
 use crate::net::outputs::{OutputState, output_worker};
 use crate::net::plugins::{PluginsState, plugins_worker};
 use crate::net::voice::{VoiceState, voice_worker};
@@ -49,7 +49,7 @@ pub struct Store {
     /// to them. The compositor persists the arrangement, so nothing here is
     /// written to a RON file.
     pub outputs: Signal<OutputState>,
-    /// The devices crownconnect pairs with, and the pairing flow in progress.
+    /// The devices crownlink pairs with, and the pairing flow in progress.
     pub cross_device: Signal<CrossDeviceState>,
     /// The themes and plugins crownplugind runs, and their settings.
     pub plugins: Signal<PluginsState>,
@@ -99,7 +99,7 @@ impl Store {
             self.mirror_wallpaper(cx, event);
         });
         output_worker(cx, self.outputs);
-        crownconnect_worker(cx, self.cross_device);
+        crownlink_worker(cx, self.cross_device);
         plugins_worker(cx, self.plugins);
         voice_worker(cx, self.voice);
     }

@@ -654,7 +654,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "crownconnect-linux"
+name = "crownlink-linux"
 version = "0.1.0"
 dependencies = [
  "crownos-ipc",
@@ -767,7 +767,7 @@ dependencies = [
  "audio",
  "chrono",
  "crownconfig",
- "crownconnect-linux",
+ "crownlink-linux",
  "crownos-accounts",
  "crownos-config",
  "crownos-ipc",

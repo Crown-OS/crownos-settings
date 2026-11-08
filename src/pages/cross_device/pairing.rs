@@ -16,7 +16,7 @@ use crate::layout::{
     nothing, paragraph, setting_row_content, setting_row_icon, settings_card_titled,
     settings_divider, spread, value_text, when,
 };
-use crate::net::crownconnect::{CrossDeviceState, Device, PairingOutcome, PairingSession};
+use crate::net::crownlink::{CrossDeviceState, Device, PairingOutcome, PairingSession};
 use crate::util::bridge::derived;
 use crate::util::qr::QrMatrix;
 use crate::util::theme::tint;
@@ -113,7 +113,7 @@ fn invite_card(state: Signal<CrossDeviceState>, qr: QrMatrix, expired: bool) -> 
 
     let steps = vstack((
         headline("Scan with your device"),
-        paragraph("Open CrownConnect on your phone or tablet and scan this code."),
+        paragraph("Open CrownLink on your phone or tablet and scan this code."),
         clock,
     ))
     .gap(INLINE_GAP)
@@ -148,7 +148,7 @@ fn invite_card(state: Signal<CrossDeviceState>, qr: QrMatrix, expired: bool) -> 
             settings_divider(),
             setting_row_icon(
                 glyph(icons::RADIO),
-                "Or pair with a nearby device: choose this computer in CrownConnect",
+                "Or pair with a nearby device: choose this computer in CrownLink",
                 value_text(""),
             ),
             settings_divider(),

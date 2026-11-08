@@ -1,8 +1,8 @@
-//! The connection to crownconnect, and the discipline of getting it back.
+//! The connection to crownlink, and the discipline of getting it back.
 
 use std::time::Duration;
 
-use crownconnect_linux::ipc::proto::{self, DeviceId, DeviceInfo, Event};
+use crownlink_linux::ipc::proto::{self, DeviceId, DeviceInfo, Event};
 use crownos_ipc::adapter::tokio::AsyncClient;
 use crownos_ipc::{Client, Error as IpcError, EventMsg, MethodMsg};
 use tokio::time::Instant;
@@ -14,7 +14,7 @@ use crate::util::worker::MessageProxy;
 const FIRST_RETRY: Duration = Duration::from_secs(1);
 const LONGEST_RETRY: Duration = Duration::from_secs(30);
 
-pub(super) const NOT_RUNNING: &str = "CrownConnect is not running.";
+pub(super) const NOT_RUNNING: &str = "CrownLink is not running.";
 
 /// Invariant: `client` being `None` always comes with a `retry_at`, so a
 /// missing daemon is a timer the worker's `select!` is already waiting on.

@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use crownui::kit::icons;
 
-use crate::net::crownconnect::{Battery, DeviceClass, DeviceInfo, Edge, Feature, LinkKind};
+use crate::net::crownlink::{Battery, DeviceClass, DeviceInfo, Edge, Feature, LinkKind};
 
 /// How the page presents one [`Feature`].
 pub struct FeatureCopy {

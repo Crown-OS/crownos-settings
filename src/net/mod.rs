@@ -37,7 +37,7 @@
 //! Its module docs say why.
 
 pub mod audio;
-pub mod crownconnect;
+pub mod crownlink;
 pub mod memory;
 pub mod outputs;
 pub mod plugins;

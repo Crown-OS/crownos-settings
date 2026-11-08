@@ -15,9 +15,9 @@ crownos-config = { path = "../crownos-config", default-features = false }
 # Live-watching config sections without opening a second notify backend.
 crownconfig = { path = "../crownui/crownconfig" }
 sha2 = "0.10"
-# The `crownconnect` protocol as the daemon declares it, for the Cross-device
+# The `crownlink` protocol as the daemon declares it, for the Cross-device
 # page. Without `daemon` it is the schema alone, like `crownpaper` below.
-crownconnect-linux = { path = "../crownconnect-linux", default-features = false }
+crownlink-linux = { path = "../crownlink-linux", default-features = false }
 # The wallpaper backend's transport: the typed crownpaper protocol plus the
 # `tokio` adapter that drives its socket on CrownUI's task runtime.
 crownos-ipc = { path = "../crownos-ipc", features = ["tokio"] }
@@ -104,7 +104,7 @@ taffy-layout = { path = "../crownui/taffy-layout" }
 # The task executor the drag profile runs the preview's studio on.
 view = { path = "../crownui/view" }
 
-# crownconnect-linux names crownos-ipc by its git URL, crownpaper by its path:
+# crownlink-linux names crownos-ipc by its git URL, crownpaper by its path:
 # one checkout for both, or their IPC traits would be two different crates.
 [patch."https://github.com/crown-os/crownos-config"]
 crownos-config = { path = "../crownos-config" }

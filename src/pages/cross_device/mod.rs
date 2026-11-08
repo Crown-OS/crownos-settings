@@ -1,5 +1,5 @@
 //! The Cross-device page: everything from pairing the first device to the
-//! per-device features, over the crownconnect daemon.
+//! per-device features, over the crownlink daemon.
 //!
 //! One screen at a time, picked by [`screen`] in order of authority: the
 //! daemon's reachability, then a pairing flow in progress, then an open
@@ -16,7 +16,7 @@ use crownui::kit::{CalloutOptions, Tone, callout, icons, spinner};
 use crownui::prelude::{AnyView, Cx, Signal, Styled, View, keyed};
 
 use crate::layout::optional;
-use crate::net::crownconnect::{CrossDeviceState, DeviceId, Link};
+use crate::net::crownlink::{CrossDeviceState, DeviceId, Link};
 use crate::pages::{PageDescriptor, page};
 use crate::state::Store;
 use pairing::Stage;
@@ -82,7 +82,7 @@ fn screen_view(cx: &mut Cx, state: Signal<CrossDeviceState>, screen: Screen) -> 
     match screen {
         Screen::Connecting => parts::quiet_card(
             spinner().size(parts::ROW_SPINNER),
-            "Connecting to CrownConnect…",
+            "Connecting to CrownLink…",
         )
         .boxed(),
         Screen::Offline => offline_notice().boxed(),
@@ -94,15 +94,15 @@ fn screen_view(cx: &mut Cx, state: Signal<CrossDeviceState>, screen: Screen) -> 
 }
 
 fn offline_notice() -> impl View {
-    callout(Tone::Neutral, "CrownConnect is not running")
-        .body("Start the crownconnect service to pair and use your devices. This page reconnects on its own.")
+    callout(Tone::Neutral, "CrownLink is not running")
+        .body("Start the crownlink service to pair and use your devices. This page reconnects on its own.")
         .icon(icons::UNLINK)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::crownconnect::{
+    use crate::net::crownlink::{
         Device, DeviceClass, DeviceInfo, Feature, FeatureSet, LinkKind, PairingOutcome,
         PairingPrompt, PairingSession,
     };

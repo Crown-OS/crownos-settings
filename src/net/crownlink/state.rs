@@ -1,7 +1,7 @@
 //! What the Cross-device page reads, and the pure folding of daemon events
 //! into it.
 
-use crownconnect_linux::ipc::proto::{self, Event};
+use crownlink_linux::ipc::proto::{self, Event};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::util::qr::QrMatrix;
@@ -373,7 +373,7 @@ fn restrict(set: FeatureSet, allowed: FeatureSet) -> FeatureSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crownconnect_linux::ipc::proto::{DeviceClass, LinkKind};
+    use crownlink_linux::ipc::proto::{DeviceClass, LinkKind};
     use tokio::sync::mpsc::unbounded_channel;
 
     const PHONE: DeviceId = DeviceId([1; 32]);
@@ -404,7 +404,7 @@ mod tests {
 
     fn invite() -> PairingInvite {
         PairingInvite {
-            qr: QrMatrix::encode("crownconnect://pair").expect("short text always encodes"),
+            qr: QrMatrix::encode("crownlink://pair").expect("short text always encodes"),
             expires_unix_ms: 10_000,
         }
     }

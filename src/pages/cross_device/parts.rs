@@ -8,7 +8,7 @@ use crownui::prelude::{Element, Listeners, Signal, View, spacer};
 use crate::layout::{
     inline, setting_row_content, settings_card, settings_card_titled, spread, value_text,
 };
-use crate::net::crownconnect::CrossDeviceState;
+use crate::net::crownlink::CrossDeviceState;
 
 pub const ROW_SPINNER: f32 = 14.0;
 pub const SECTION: &str = "Cross-device";

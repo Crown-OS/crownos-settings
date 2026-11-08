@@ -4,7 +4,7 @@
 use crownui::prelude::{Cx, Size};
 
 use crate::net::audio::{Microphone, Microphones};
-use crate::net::crownconnect::{
+use crate::net::crownlink::{
     Battery, Device, DeviceClass, DeviceId, DeviceInfo, Feature, FeatureSet, Link, LinkKind,
 };
 use crate::net::outputs::{Mode, Monitor, Transform};

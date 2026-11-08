@@ -9,7 +9,7 @@ use crate::layout::{
     INLINE_GAP, glyph, headline, inline, paragraph, setting_row_content, setting_row_icon,
     settings_card_titled, settings_divider, value_text,
 };
-use crate::net::crownconnect::{CrossDeviceState, Feature};
+use crate::net::crownlink::{CrossDeviceState, Feature};
 
 const HERO_GLYPH: f32 = 40.0;
 const HERO_STROKE: f32 = 2.0;

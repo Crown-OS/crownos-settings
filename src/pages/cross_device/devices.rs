@@ -9,7 +9,7 @@ use crate::layout::{
     Listed, glyph, hairline_unless_first, inline, listed, optional, setting_row_content,
     setting_row_icon_desc, settings_card_titled, settings_divider, value_text,
 };
-use crate::net::crownconnect::{CrossDeviceState, Device};
+use crate::net::crownlink::{CrossDeviceState, Device};
 use crate::util::bridge::derived;
 
 const BATTERY_GLYPH: f32 = 15.0;
