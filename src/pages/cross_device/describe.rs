@@ -123,7 +123,7 @@ pub const fn feature_copy(feature: Feature) -> FeatureCopy {
         ),
         Feature::Files => (icons::FOLDER, "Files", "Send files between the two"),
         Feature::Messages => (
-            icons::MESSAGES_SQUARE,
+            icons::MESSAGE_SQUARE,
             "Messages",
             "Read and reply to the device's messages here",
         ),
@@ -133,27 +133,31 @@ pub const fn feature_copy(feature: Feature) -> FeatureCopy {
             "See the device's recent calls",
         ),
         Feature::Contacts => (
-            icons::CONTACT_ROUND,
+            icons::CONTACT,
             "Contacts",
             "Use the device's contacts on this computer",
         ),
         Feature::Capture => (
             icons::SCAN,
             "Capture",
-            "Take a photo or scan on the device and get it here",
+            "Take photos and scans with the device for this computer",
         ),
         Feature::DragDrop => (
-            icons::HAND_GRAB,
+            icons::HAND,
             "Drag and drop",
-            "Drag files and text between the two screens",
+            "Drag files between the two screens",
         ),
-        Feature::Cast => (icons::CAST, "Cast", "Play media from one on the other"),
+        Feature::Cast => (icons::CAST, "Cast", "Send media from here to the device"),
         Feature::AudioHandoff => (
             icons::HEADPHONES,
             "Audio handoff",
-            "Move audio between the two",
+            "Move playing audio between the two",
         ),
-        Feature::Focus => (icons::MOON, "Focus", "Keep focus modes the same on both"),
+        Feature::Focus => (
+            icons::MOON,
+            "Focus",
+            "Keep Do Not Disturb the same on both",
+        ),
         Feature::LiveActivities => (
             icons::ACTIVITY,
             "Live activities",
@@ -167,9 +171,13 @@ pub const fn feature_copy(feature: Feature) -> FeatureCopy {
         Feature::FindMy => (
             icons::LOCATE,
             "Find my device",
-            "Ring the device to find it",
+            "Ring or locate the device from here",
         ),
-        Feature::Links => (icons::LINK, "Links", "Open links from one on the other"),
+        Feature::Links => (
+            icons::LINK,
+            "Links",
+            "Open links from one device on the other",
+        ),
     };
     FeatureCopy {
         glyph,
