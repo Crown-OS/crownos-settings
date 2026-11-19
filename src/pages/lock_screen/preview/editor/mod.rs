@@ -1,4 +1,4 @@
-//! Handles on the preview's clock, after ColorOS's editor: drag the clock to
+//! Handles on the preview's clock: drag the clock to
 //! move it, pull the corner handle down to stretch it and sideways to add or
 //! take away the colon, click it for the Clock & colour sheet. The Effects
 //! sheet trades the handles for warp corners, or for the hours and minutes
@@ -188,8 +188,7 @@ impl State {
         self.grab.set(cx, None);
     }
 
-    /// A click on the clock opens the Clock & colour sheet, as a tap does in
-    /// ColorOS's editor.
+    /// A click on the clock opens the Clock & colour sheet.
     pub(super) fn click(self, cx: &mut Cx, at: Point) {
         let look = cx.untrack(|runtime| self.shown_look(runtime));
         let moving = cx.untrack(|runtime| self.handle_mode(runtime)) == EditMode::Move;

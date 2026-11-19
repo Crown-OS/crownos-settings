@@ -24,10 +24,14 @@ pub const LAYOUTS: [(ClockLayout, &str); 3] = [
     (ClockLayout::Stacked, "Stacked"),
 ];
 /// The fonts the Clock & colour sheet offers, in the order it shows them.
-pub const FONTS: [(ClockFont, &str); 3] = [
+pub const FONTS: [(ClockFont, &str); 7] = [
     (ClockFont::Sans, "Sans"),
     (ClockFont::Grotesk, "Grotesk"),
     (ClockFont::Serif, "Serif"),
+    (ClockFont::Higher, "Higher"),
+    (ClockFont::Apache, "Apache"),
+    (ClockFont::Boston, "Boston"),
+    (ClockFont::Tribo, "Tribo"),
 ];
 /// Logical pixels across a layout card's picture.
 const LAYOUT_PIXELS: f32 = 220.0;

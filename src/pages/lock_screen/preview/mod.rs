@@ -1,6 +1,6 @@
 //! A live preview of the lock screen, drawn by the lock screen's own layout,
 //! paint and animation — so it shows what the compositor will — and edited
-//! in place, as ColorOS's lock screen editor is.
+//! in place.
 //!
 //! [`studio`] paints off the UI thread; what it sends back is uploaded once
 //! and composited every frame by [`compose`] on a canvas, the layer styles of

@@ -65,7 +65,7 @@ pub fn compose(
         to_preview,
     );
     if let Some(subject) = backdrop.get(Slot::Subject).filter(|_| look.depth) {
-        let style = frame.subject();
+        let style = frame.subject;
         let fading = LayerStyle {
             opacity: style.opacity * (1.0 - blurred_share(&style)),
             ..style

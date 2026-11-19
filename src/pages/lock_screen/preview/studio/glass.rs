@@ -1,4 +1,4 @@
-//! Glass digits, as the compositor fills them after ColorOS 17: the lock's
+//! Glass digits, as the compositor fills them: the lock's
 //! background blurred behind each glyph, brightened, with white added on top
 //! — a plus-lighter blend on sRGB values, see [`Glass`] — kept to the glyph's
 //! coverage.
