@@ -302,7 +302,19 @@ impl CrossDeviceState {
                 }
             }
             Event::FeatureFailed(proto::FeatureFailed { reason, .. }) => self.error = Some(reason),
-            Event::CallStateChanged(_) | Event::MediaChanged(_) => {}
+            Event::CallStateChanged(_)
+            | Event::MediaChanged(_)
+            | Event::MessageChanged(_)
+            | Event::CollectionsChanged(_)
+            | Event::CaptureFinished(_)
+            | Event::TransferChanged(_)
+            | Event::AudioRoutesChanged(_)
+            | Event::FocusChanged(_)
+            | Event::LiveActivitiesChanged(_)
+            | Event::WifiReceived(_)
+            | Event::LocalRingChanged(_)
+            | Event::ViewerResized(_)
+            | Event::MonitorTitleChanged(_) => {}
         }
     }
 

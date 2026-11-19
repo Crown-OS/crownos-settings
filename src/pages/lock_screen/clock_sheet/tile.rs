@@ -1,5 +1,5 @@
 //! One choice on the Clock & colour sheet: a picture on a tile, ringed in
-//! the accent while the clock wears it, as ColorOS rings the one in use.
+//! the accent while the clock wears it.
 
 use crownos_config::schema::{ClockLook, Lock};
 use crownui::kit::use_theme;

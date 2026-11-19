@@ -1,5 +1,4 @@
-//! The bar under the preview, after the tabs of ColorOS's lock screen
-//! editor: which sheet the card opens — Clock & colour, Wallpaper or
+//! The bar under the preview: which sheet the card opens — Clock & colour, Wallpaper or
 //! Effects — and the depth switch, with how far the cut has got.
 
 use crownui::kit::{ToggleItem, toggle, toggle_group};

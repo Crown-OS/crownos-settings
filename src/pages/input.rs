@@ -130,7 +130,7 @@ fn microphone_options(microphones: &Microphones) -> Vec<NamedOption> {
 }
 
 /// What the "Automatic" row says, named with the device it currently resolves
-/// to — the way macOS writes "Automatic (MacBook Air Microphone)".
+/// to, as in "Automatic (Built-in Microphone)".
 fn automatic_label(default: Option<&str>) -> String {
     match default {
         Some(name) => format!("Automatic ({name})"),

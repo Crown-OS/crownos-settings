@@ -1,5 +1,5 @@
-//! The Clock & colour sheet, after ColorOS's: the three layouts and the
-//! three fonts, each drawn by the lock screen's own code, a weight slider
+//! The Clock & colour sheet: the three layouts and the
+//! six fonts, each drawn by the lock screen's own code, a weight slider
 //! from a thin "A" to a bold one, and a slider from frosted glass to solid
 //! white.
 

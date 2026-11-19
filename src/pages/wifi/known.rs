@@ -104,7 +104,7 @@ fn known_row(cx: &mut Cx, wifi: Signal<WifiState>, row: Row) -> impl View + use<
     ))
 }
 
-/// macOS's ⋯ menu for a saved network, minus "Copy Password" — `nmrs` exposes
+/// The ⋯ menu for a saved network, without "Copy Password" — `nmrs` exposes
 /// no way to read a secret back out of NetworkManager.
 ///
 /// Auto-join and forget are both `uuid` operations, and a group whose saved

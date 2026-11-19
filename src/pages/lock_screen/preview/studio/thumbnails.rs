@@ -17,7 +17,7 @@ const FONT_MARGIN: f32 = 0.12;
 /// Of the tallest clock's height: the room left around the clocks on the
 /// layout cards.
 const LAYOUT_MARGIN: f32 = 0.16;
-/// The moment every thumbnail reads, as ColorOS's own cards do: 09:41 on a
+/// The moment every thumbnail reads: 09:41 on a
 /// Monday the 12th.
 const SAMPLE_DAY: (i32, u32, u32) = (2026, 10, 12);
 const SAMPLE_TIME: (u32, u32) = (9, 41);

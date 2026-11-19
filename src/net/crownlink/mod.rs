@@ -16,7 +16,7 @@ mod worker;
 pub use crownlink_linux::ipc::proto::{
     Battery, DeviceClass, DeviceId, DeviceInfo, Edge, Feature, FeatureSet, FeatureState, LinkKind,
 };
-#[cfg(test)]
+#[allow(unused_imports)]
 pub use state::PairingPrompt;
 pub use state::{CrossDeviceState, Device, Link, PairingInvite, PairingOutcome, PairingSession};
 

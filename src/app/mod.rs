@@ -10,6 +10,8 @@ mod search;
 #[cfg(test)]
 mod tests;
 mod theme;
+mod window;
 
 pub use navigation::Navigation;
 pub use root::root;
+pub use window::window_config;

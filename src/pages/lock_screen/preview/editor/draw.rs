@@ -1,5 +1,5 @@
 //! Drawing for the editor: images carried through the clock's edit, and the
-//! handles over the clock — ColorOS's thin rounded outline with its thick
+//! handles over the clock — a thin rounded outline with its thick
 //! quarter-arc corner, or the warp corners, or the hours and minutes boxes.
 
 use crownui::ext::{DrawCommand, DrawList, ImageId, Paint, Path, Stroke};

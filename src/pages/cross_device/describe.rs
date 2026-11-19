@@ -122,6 +122,62 @@ pub const fn feature_copy(feature: Feature) -> FeatureCopy {
             "Turn on the device's mobile hotspot from here",
         ),
         Feature::Files => (icons::FOLDER, "Files", "Send files between the two"),
+        Feature::Messages => (
+            icons::MESSAGE_SQUARE,
+            "Messages",
+            "Read and reply to the device's messages here",
+        ),
+        Feature::CallHistory => (
+            icons::HISTORY,
+            "Call history",
+            "See the device's recent calls",
+        ),
+        Feature::Contacts => (
+            icons::CONTACT,
+            "Contacts",
+            "Use the device's contacts on this computer",
+        ),
+        Feature::Capture => (
+            icons::SCAN,
+            "Capture",
+            "Take photos and scans with the device for this computer",
+        ),
+        Feature::DragDrop => (
+            icons::HAND,
+            "Drag and drop",
+            "Drag files between the two screens",
+        ),
+        Feature::Cast => (icons::CAST, "Cast", "Send media from here to the device"),
+        Feature::AudioHandoff => (
+            icons::HEADPHONES,
+            "Audio handoff",
+            "Move playing audio between the two",
+        ),
+        Feature::Focus => (
+            icons::MOON,
+            "Focus",
+            "Keep Do Not Disturb the same on both",
+        ),
+        Feature::LiveActivities => (
+            icons::ACTIVITY,
+            "Live activities",
+            "Show the device's live activities here",
+        ),
+        Feature::WifiSharing => (
+            icons::WIFI,
+            "Wi-Fi sharing",
+            "Share Wi-Fi networks between the two",
+        ),
+        Feature::FindMy => (
+            icons::LOCATE,
+            "Find my device",
+            "Ring or locate the device from here",
+        ),
+        Feature::Links => (
+            icons::LINK,
+            "Links",
+            "Open links from one device on the other",
+        ),
     };
     FeatureCopy {
         glyph,
