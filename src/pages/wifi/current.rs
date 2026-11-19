@@ -1,6 +1,6 @@
 //! The network this machine is on, and — once asked — what that connection is.
 //!
-//! Details expand inline instead of opening a sheet. macOS uses a modal here;
+//! Details expand inline instead of opening a sheet. A modal would be usual here, but
 //! this app has no modal layer, and inventing one so that four read-only rows
 //! have somewhere to live would be the wrong trade.
 

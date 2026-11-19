@@ -26,7 +26,7 @@ const CELL_HEIGHT: f32 = 33.0;
 /// blocks and between the outer thumbnails and the card's border.
 const TILE_GAP: f32 = 8.0;
 /// The selection ring: an accent border floated just off the thumbnail,
-/// macOS-picker style, so choosing never occludes the image.
+/// so choosing never occludes the image.
 const RING_WIDTH: f32 = 2.0;
 /// The grid's inset from the card's border: with the ring's own inset it
 /// makes up [`TILE_GAP`].

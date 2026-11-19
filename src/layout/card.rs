@@ -8,7 +8,7 @@ pub fn settings_card(rows: impl ViewSeq + 'static) -> impl View {
 }
 
 /// [`settings_card`] under a small uppercase, muted section label — the
-/// "General", "Network", … headers macOS System Settings prints above each
+/// "General", "Network", … headers printed above each
 /// card.
 pub fn settings_card_titled<R: ViewSeq + 'static>(title: &str, rows: R) -> impl View + use<R> {
     section(title.to_uppercase(), rows)
