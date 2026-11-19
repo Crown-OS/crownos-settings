@@ -153,11 +153,7 @@ pub const fn feature_copy(feature: Feature) -> FeatureCopy {
             "Audio handoff",
             "Move playing audio between the two",
         ),
-        Feature::Focus => (
-            icons::MOON,
-            "Focus",
-            "Keep Do Not Disturb the same on both",
-        ),
+        Feature::Focus => (icons::MOON, "Focus", "Keep Do Not Disturb the same on both"),
         Feature::LiveActivities => (
             icons::ACTIVITY,
             "Live activities",

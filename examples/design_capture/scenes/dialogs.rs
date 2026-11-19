@@ -40,12 +40,10 @@ pub fn capture(carrier: &mut Carrier) -> Result<()> {
         store.cross_device.update(cx, |state| {
             state.now_unix_ms = now;
             state.pairing = Some(PairingSession {
-                invite: QrMatrix::encode(INVITATION)
-                    .ok()
-                    .map(|qr| PairingInvite {
-                        qr,
-                        expires_unix_ms: now + INVITE_LIFETIME_MS,
-                    }),
+                invite: QrMatrix::encode(INVITATION).ok().map(|qr| PairingInvite {
+                    qr,
+                    expires_unix_ms: now + INVITE_LIFETIME_MS,
+                }),
                 ..PairingSession::default()
             });
         });
