@@ -122,6 +122,54 @@ pub const fn feature_copy(feature: Feature) -> FeatureCopy {
             "Turn on the device's mobile hotspot from here",
         ),
         Feature::Files => (icons::FOLDER, "Files", "Send files between the two"),
+        Feature::Messages => (
+            icons::MESSAGES_SQUARE,
+            "Messages",
+            "Read and reply to the device's messages here",
+        ),
+        Feature::CallHistory => (
+            icons::HISTORY,
+            "Call history",
+            "See the device's recent calls",
+        ),
+        Feature::Contacts => (
+            icons::CONTACT_ROUND,
+            "Contacts",
+            "Use the device's contacts on this computer",
+        ),
+        Feature::Capture => (
+            icons::SCAN,
+            "Capture",
+            "Take a photo or scan on the device and get it here",
+        ),
+        Feature::DragDrop => (
+            icons::HAND_GRAB,
+            "Drag and drop",
+            "Drag files and text between the two screens",
+        ),
+        Feature::Cast => (icons::CAST, "Cast", "Play media from one on the other"),
+        Feature::AudioHandoff => (
+            icons::HEADPHONES,
+            "Audio handoff",
+            "Move audio between the two",
+        ),
+        Feature::Focus => (icons::MOON, "Focus", "Keep focus modes the same on both"),
+        Feature::LiveActivities => (
+            icons::ACTIVITY,
+            "Live activities",
+            "Show the device's live activities here",
+        ),
+        Feature::WifiSharing => (
+            icons::WIFI,
+            "Wi-Fi sharing",
+            "Share Wi-Fi networks between the two",
+        ),
+        Feature::FindMy => (
+            icons::LOCATE,
+            "Find my device",
+            "Ring the device to find it",
+        ),
+        Feature::Links => (icons::LINK, "Links", "Open links from one on the other"),
     };
     FeatureCopy {
         glyph,
