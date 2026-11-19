@@ -30,28 +30,11 @@ mod state;
 mod util;
 
 use anyhow::{Result, bail};
-use crownui::AppConfig;
-use crownui::kit::{INTER_FAMILY, inter_font};
-use crownui::prelude::BLACK;
-
-/// Wide enough for the sidebar plus a comfortable card column.
-const INITIAL_SIZE: (u32, u32) = (1040, 720);
-/// Below this the cards start clipping, so don't let the window get there.
-const MIN_SIZE: (u32, u32) = (720, 480);
 
 fn main() -> Result<()> {
     let plugin = plugin_argument(std::env::args().skip(1))?;
     let page = page_argument(std::env::args().skip(1)).and_then(|link| pages::ordinal_of(&link));
-    let config = AppConfig::new("Settings")
-        .app_id("crownsettings")
-        .size(INITIAL_SIZE.0, INITIAL_SIZE.1)
-        .min_size(MIN_SIZE.0, MIN_SIZE.1)
-        // The palette's surfaces are translucent; what shows through them is
-        // black, as it always was, rather than the toolkit's white.
-        .clear_color(BLACK)
-        .font(inter_font().to_vec(), Some(INTER_FAMILY));
-
-    let result = crownui::run(app::root(plugin, page), config);
+    let result = crownui::run(app::root(plugin, page), app::window_config());
 
     // The window is gone, so nothing is going to change again — but a write
     // debounced moments before it closed is still owed to the user.

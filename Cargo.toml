@@ -94,6 +94,9 @@ wayland-protocols-wlr = { version = "0.3", default-features = false, features = 
 ] }
 
 [dev-dependencies]
+# Headless captures of every state for the CrownOS-Design Figma file
+# (`examples/design_capture`).
+capture = { path = "../crownui/capture" }
 # Drives the whole window headlessly: every page built, every sidebar row clicked.
 crowntest = { path = "../crownui/crowntest" }
 # Offscreen Impeller renders of every page, for looking at (an ignored test).
