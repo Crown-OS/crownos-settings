@@ -208,6 +208,7 @@ impl OutputState {
             OutputEvent::Unavailable(reason) => {
                 self.unavailable = Some(reason);
                 self.loaded = true;
+                self.confirmation = None;
             }
         }
     }
@@ -857,6 +858,16 @@ mod tests {
             "the page must stop saying it is still looking"
         );
         assert_eq!(state.unavailable.as_deref(), Some("no support"));
+    }
+
+    #[test]
+    fn a_compositor_gone_mid_apply_does_not_leave_the_apply_waiting() {
+        let mut state = loaded(vec![monitor("DP-1", (0, 0))]);
+        state.edit("DP-1", |draft| draft.scale = 1.0);
+        state.apply();
+
+        state.apply_event(OutputEvent::Unavailable("gone".into()));
+        assert_eq!(state.confirmation, None);
     }
 
     fn described(name: &str, identity: &str, primary: bool) -> Monitor {
