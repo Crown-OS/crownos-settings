@@ -25,10 +25,6 @@ impl OutputNames {
         &self.identity
     }
 
-    pub fn is(&self, name: &str) -> bool {
-        self.connector == name || self.identity == name
-    }
-
     pub fn setting<'a>(&self, compositor: &'a Compositor) -> Option<&'a OutputSetting> {
         compositor.output(&self.connector, &self.identity)
     }

@@ -2,7 +2,7 @@
 
 use crownos_config::schema::{Compositor, OutputSetting, ShellRole};
 use crownui::kit::toggle;
-use crownui::prelude::{Cx, Runtime, Semantic, View, vstack};
+use crownui::prelude::{Cx, Runtime, Semantic, View, bind, vstack};
 
 use super::super::output_names::OutputNames;
 use crate::layout::{setting_row_desc, settings_divider};
@@ -41,28 +41,26 @@ fn is_primary(runtime: &mut Runtime, store: Store, name: &str) -> bool {
     })
 }
 
+/// Works like a radio button: the primary monitor's switch is on and locked,
+/// and switching another one on moves the primary there.
 fn primary_row(cx: &mut Cx, store: Store, name: String, names: OutputNames) -> impl View + use<> {
+    let reading = name.clone();
     let on = bridge(
         cx,
-        move |runtime| is_primary(runtime, store, &name),
+        move |runtime| is_primary(runtime, store, &reading),
         move |runtime, on| {
-            store.update(runtime, |compositor: &mut Compositor| {
-                let configured_here = compositor
-                    .primary_output
-                    .as_deref()
-                    .is_some_and(|configured| names.is(configured));
-                if on {
+            if on {
+                store.update(runtime, |compositor: &mut Compositor| {
                     compositor.primary_output = Some(names.identity().to_owned());
-                } else if configured_here {
-                    compositor.primary_output = None;
-                }
-            });
+                });
+            }
         },
     );
+    let locked = bind(move |runtime| is_primary(runtime, store, &name));
     setting_row_desc(
         "Use as primary",
         "The dock and notifications show here unless set otherwise",
-        toggle(on).label("Use as primary"),
+        toggle(on).label("Use as primary").disabled(locked),
     )
 }
 

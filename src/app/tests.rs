@@ -544,3 +544,24 @@ fn the_selected_monitor_has_its_own_brightness() {
     let scope = app.find(role(Role::ComboBox).name("Workspaces"));
     assert_eq!(scope.value.as_deref(), Some("Each monitor on its own"));
 }
+
+/// "Use as primary" acts like a radio button: the primary's switch is on and
+/// locked, and switching another monitor on moves the badge there.
+#[test]
+fn the_primary_moves_and_never_switches_off_in_place() {
+    let mut app = display_with_two_monitors();
+    app.settle();
+    let primary = || role(Role::Switch).name("Use as primary");
+    let state = app.find(primary()).states;
+    assert!(state.checked == Some(true) && state.disabled, "{state:?}");
+
+    app.click(role(Role::Button).name("Settings"));
+    app.settle();
+    let state = app.find(primary()).states;
+    assert!(state.checked != Some(true) && !state.disabled, "{state:?}");
+
+    app.click(primary());
+    app.settle();
+    let state = app.find(primary()).states;
+    assert!(state.checked == Some(true) && state.disabled, "{state:?}");
+}

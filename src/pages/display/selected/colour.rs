@@ -37,11 +37,8 @@ pub fn deep_color_row(
     );
     let outputs = store.outputs;
     let description = bind(move |runtime| {
-        if on.get(runtime) && scanout_bits(runtime, outputs, &name) < Some(DEEP_COLOR_BITS) {
-            "Running at 8-bit".to_owned()
-        } else {
-            "Scan out with 10 bits for each colour".to_owned()
-        }
+        let on = on.get(runtime);
+        deep_color_note(on, scanout_bits(runtime, outputs, &name)).to_owned()
     });
     vstack((
         settings_divider(),
@@ -62,6 +59,15 @@ fn scanout_bits(runtime: &mut Runtime, outputs: Signal<OutputState>, name: &str)
     })
 }
 
+/// "Running at 8-bit" only when the compositor reported a shallower scanout.
+fn deep_color_note(on: bool, scanout_bits: Option<u32>) -> &'static str {
+    if on && scanout_bits.is_some_and(|bits| bits < DEEP_COLOR_BITS) {
+        "Running at 8-bit"
+    } else {
+        "Scan out with 10 bits for each colour"
+    }
+}
+
 pub fn hdr_row(hdr_capable: bool) -> impl View {
     let support = if hdr_capable {
         "Supported"
@@ -69,4 +75,18 @@ pub fn hdr_row(hdr_capable: bool) -> impl View {
         "Not supported"
     };
     vstack((settings_divider(), setting_row("HDR", value_text(support))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_8_bit_note_shows_only_when_the_compositor_reported_8_bits() {
+        let running_at_8_bit = "Running at 8-bit";
+        assert_eq!(deep_color_note(true, Some(8)), running_at_8_bit);
+        assert_ne!(deep_color_note(true, Some(10)), running_at_8_bit);
+        assert_ne!(deep_color_note(true, None), running_at_8_bit);
+        assert_ne!(deep_color_note(false, Some(8)), running_at_8_bit);
+    }
 }
