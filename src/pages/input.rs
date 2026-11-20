@@ -117,7 +117,7 @@ fn build(cx: &mut Cx, store: Store) -> AnyView {
                 setting_row_desc(
                     "Swap Caps Lock and Escape",
                     "Makes the Caps Lock key act as Escape and the Escape key act as Caps Lock",
-                    switch(cx, store, input::SwapCapsAndEsc),
+                    switch(cx, store, input::SwapCapsAndEsc).label("Swap Caps Lock and Escape"),
                 ),
             ),
         ),
