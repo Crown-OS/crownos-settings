@@ -136,6 +136,13 @@ impl Arrangement {
                 })
             })
         });
+        let labels = labels
+            .absolute()
+            .top(0.0)
+            .left(0.0)
+            .w_full()
+            .h(CANVAS_HEIGHT)
+            .pointer_events_none();
         vstack((picture, labels)).relative().w_full()
     }
 

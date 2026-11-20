@@ -487,6 +487,11 @@ fn dragging_a_monitor_on_the_arrangement_drafts_its_new_place() {
         bounds.origin.y + bounds.size.height / 2.0,
     );
     assert!(!app.exists(text("Unapplied changes")));
+    let badge = app.find(text("Primary")).bounds;
+    assert!(
+        bounds.contains(badge.origin),
+        "the labels sit over the tiles: {badge:?} is outside {bounds:?}"
+    );
 
     app.pointer_down(right_monitor.0, right_monitor.1);
     for step in 1..=10 {
