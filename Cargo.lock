@@ -780,6 +780,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "crownpositor-control"
+version = "0.1.0"
+dependencies = [
+ "crownos-ipc",
+ "serde",
+]
+
+[[package]]
 name = "crownsettings"
 version = "0.1.0"
 dependencies = [
@@ -796,6 +804,7 @@ dependencies = [
  "crownpaper",
  "crownplugin-model",
  "crownplugin-proto",
+ "crownpositor-control",
  "crowntest",
  "crownui",
  "depthcut",
@@ -804,6 +813,7 @@ dependencies = [
  "impeller",
  "lockscreen",
  "nmrs",
+ "pulldown-cmark",
  "qrcode",
  "semantics",
  "serde",
@@ -811,6 +821,7 @@ dependencies = [
  "taffy-layout",
  "tokio",
  "turbojpeg",
+ "update-client",
  "view",
  "wayland-client",
  "wayland-protocols-wlr",
@@ -2133,6 +2144,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulldown-cmark"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
+dependencies = [
+ "bitflags",
+ "memchr",
+ "unicase",
+]
+
+[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3025,6 +3047,21 @@ dependencies = [
 
 [[package]]
 name = "toml"
+version = "0.9.12+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned 1.1.2",
+ "toml_datetime 0.7.5+spec-1.1.0",
+ "toml_parser",
+ "toml_writer",
+ "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml"
 version = "1.2.0+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5ffcdf8f50436dbbfd675c1fe1b8e0854f42b7defea8584bdebe1aee900e561"
@@ -3045,6 +3082,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.7.5+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
+dependencies = [
+ "serde_core",
 ]
 
 [[package]]
@@ -3191,6 +3237,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "unicase"
+version = "2.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357cc3acc6a036009fd6c973ed009037c732d60d0b4f6c673e9041497482a28f"
+
+[[package]]
 name = "unicode-bidi"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3231,6 +3283,33 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+
+[[package]]
+name = "update-client"
+version = "0.1.0"
+dependencies = [
+ "crownos-ipc",
+ "thiserror 2.0.21",
+ "update-proto",
+]
+
+[[package]]
+name = "update-manifest"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "update-proto"
+version = "0.1.0"
+dependencies = [
+ "crownos-ipc",
+ "serde",
+ "update-manifest",
+]
 
 [[package]]
 name = "ureq"

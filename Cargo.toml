@@ -37,6 +37,10 @@ crownos-accounts = { path = "../crownos-accounts" }
 crownplugin-proto = { path = "../crownos-plugins/proto" }
 # The declarative settings fields a plugin contributes, and their validation.
 crownplugin-model = { path = "../crownos-plugins/model" }
+# The crownos-updated client, for the System Updates page.
+update-client = { path = "../crownos-update/update-client" }
+# The release notes are Markdown.
+pulldown-cmark = { version = "0.13", default-features = false }
 # `static` links Impeller into the binary, so it runs without an rpath to the
 # SDK the build downloads.
 crownui = { path = "../crownui/crownui", features = ["static"] }
@@ -44,6 +48,9 @@ crownui = { path = "../crownui/crownui", features = ["static"] }
 # page's preview — so what it shows is what the compositor draws. Without
 # `pam`: a preview never checks a password.
 lockscreen = { path = "../crownpositor/lockscreen" }
+# The compositor's control socket, to restart the session after an update
+# that asks for it.
+crownpositor-control = { path = "../crownpositor/control" }
 # Where a wallpaper's depth mask is cached, and the helper process that cuts
 # one. Without `helper`: the segmentation model is never built in here.
 depthcut = { path = "../crownpositor/depthcut" }

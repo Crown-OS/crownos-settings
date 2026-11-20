@@ -7,6 +7,7 @@ use crownui::prelude::component;
 
 use super::fixtures::populate;
 use super::root::shell;
+use crate::net::updates::{ApplyStep, DownloadStatus, InProgress};
 use crate::pages;
 use crate::state::Store;
 
@@ -346,4 +347,82 @@ fn render_every_page() {
         };
         std::fs::write(std::path::Path::new(&dir).join(name), png).expect("PNG written");
     }
+}
+
+/// The next release brings its notes and verbs, a failure its way back, and
+/// a session restart says what closes.
+#[test]
+fn system_updates_show_the_next_release_and_the_way_back() {
+    let mut app = window(ordinal_of("System Updates"), true);
+    app.settle();
+    for line in [
+        "CrownOS 0.4.0",
+        "What's new in 0.4.1",
+        "Highlights",
+        "A new dock",
+        "The update did not finish",
+        "To go back, hold Space while the computer starts and choose Rollback to CrownOS 0.4.0.",
+    ] {
+        assert!(
+            app.exists(role(Role::Text).name(line)),
+            "{line:?} is missing:\n{}",
+            app.semantics_snapshot()
+        );
+    }
+    assert!(app.exists(role(Role::Button).name("Download")));
+    assert!(
+        !app.find(role(Role::Button).name("Update now"))
+            .states
+            .disabled
+    );
+    assert!(
+        !app.find(role(Role::Button).name("Try again"))
+            .states
+            .disabled
+    );
+
+    app.click(role(Role::Button).name("Dismiss"));
+    app.settle();
+    assert!(!app.exists(role(Role::Text).name("The update did not finish")));
+}
+
+/// An interrupted update can only go on: Check waits and says why, and both
+/// the notes card and the failure card continue the update.
+#[test]
+fn an_interrupted_update_offers_only_to_continue() {
+    let mut app = TestApp::with_size(
+        component(|cx| {
+            let store = Store::defaults(cx);
+            populate(cx, store);
+            store.updates.update(cx, |updates| {
+                let Some(snapshot) = updates.snapshot.as_mut() else {
+                    return;
+                };
+                let (Ok(from), Ok(to)) = ("0.4.0".parse(), "0.4.1".parse()) else {
+                    return;
+                };
+                if let Some(next) = snapshot.next.as_mut() {
+                    next.download = DownloadStatus::Complete;
+                }
+                snapshot.in_progress = Some(InProgress {
+                    from,
+                    to,
+                    completed: ApplyStep::Install,
+                });
+            });
+            shell(cx, store, ordinal_of("System Updates"))
+        }),
+        WIDTH,
+        HEIGHT,
+    );
+    app.settle();
+    assert!(
+        app.find(role(Role::Button).name("Check for updates"))
+            .states
+            .disabled
+    );
+    assert!(app.exists(role(Role::Text).name("Finish the current update first.")));
+    assert_eq!(app.count(role(Role::Button).name("Continue update")), 2);
+    assert!(!app.exists(role(Role::Button).name("Update now")));
+    assert!(!app.exists(role(Role::Button).name("Download")));
 }

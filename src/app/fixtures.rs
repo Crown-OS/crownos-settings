@@ -12,6 +12,10 @@ use crate::net::plugins::{
     CapabilityInfo, Decision, EntityInfo, EntityStatus, Field, Kind, Level, Link as PluginsLink,
     LogLevel, LogLine, SelectOption, SettingValue, SettingsSection,
 };
+use crate::net::updates::{
+    ApplyStep, DownloadStatus, FailedStep, Failure, Link as UpdatesLink, NextRelease, Phase,
+    ReleaseVersion, RestartKind, Rollback, SnapperNumber, Snapshot,
+};
 use crate::net::voice::VoiceService;
 use crate::net::wallpaper::{Thumbnail, WallpaperEntry};
 use crate::net::wifi::{ActiveWifi, KnownNetwork, LinkState, OtherNetwork, WifiSnapshot};
@@ -141,6 +145,7 @@ pub(super) fn populate(cx: &mut Cx, store: Store) {
     });
     populate_plugins(cx, store);
     populate_voice(cx, store);
+    populate_updates(cx, store);
 }
 
 fn populate_voice(cx: &mut Cx, store: Store) {
@@ -286,5 +291,43 @@ fn populate_plugins(cx: &mut Cx, store: Store) {
             at: 0,
             message: "attempt to index a nil value".to_owned(),
         }];
+    });
+}
+
+const NEXT_RELEASE_NOTES: &str = "## Highlights\n\nFaster updates.\n\n- A new dock\n  - with folders\n\n> Restart once.\n\n```\ncrownsettings updates\n```\n\n---\n";
+
+/// An update to 0.4.1 whose release script failed, with its rollback.
+fn populate_updates(cx: &mut Cx, store: Store) {
+    let (Ok(installed), Ok(next)) = (
+        "0.4.0".parse::<ReleaseVersion>(),
+        "0.4.1".parse::<ReleaseVersion>(),
+    ) else {
+        return;
+    };
+    let snapshot = Snapshot {
+        installed: Some(installed.clone()),
+        channel: "v0.4.0".parse().ok(),
+        phase: Phase::Idle,
+        next: Some(NextRelease {
+            version: next,
+            restart: RestartKind::Session,
+            notes: Some(NEXT_RELEASE_NOTES.to_owned()),
+            new_packages: Vec::new(),
+            download: DownloadStatus::Pending,
+        }),
+        failure: Some(Failure {
+            step: FailedStep::Apply(ApplyStep::PostUpdate),
+            message: "post-update exited with status 1".to_owned(),
+            rollback: Some(Rollback {
+                snapshot: SnapperNumber(7),
+                from: installed,
+            }),
+        }),
+        log_tail: vec!["downloading crowndock 100%".to_owned()],
+        ..Snapshot::default()
+    };
+    store.updates.update(cx, |updates| {
+        updates.link = UpdatesLink::Online;
+        updates.snapshot = Some(snapshot);
     });
 }

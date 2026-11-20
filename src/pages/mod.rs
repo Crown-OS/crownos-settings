@@ -24,6 +24,7 @@ mod plugins;
 mod power;
 mod screenshot;
 mod sound;
+mod updates;
 mod voice;
 mod wifi;
 mod windows_apps;
@@ -95,6 +96,7 @@ pub static GROUPS: &[PageGroup] = &[
             windows_apps::PAGE,
             performance::PAGE,
             power::PAGE,
+            updates::PAGE,
         ],
     },
 ];

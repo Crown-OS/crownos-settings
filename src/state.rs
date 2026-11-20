@@ -31,6 +31,7 @@ use crate::net::audio::{Microphones, follow_microphones};
 use crate::net::crownlink::{CrossDeviceState, crownlink_worker};
 use crate::net::outputs::{OutputState, output_worker};
 use crate::net::plugins::{PluginsState, plugins_worker};
+use crate::net::updates::{UpdatesState, updates_worker};
 use crate::net::voice::{VoiceState, voice_worker};
 use crate::net::wallpaper::{WallpaperEvent, WallpaperState, wallpaper_worker};
 use crate::net::wifi::{WifiEvent, WifiSnapshot, WifiState, wifi_worker};
@@ -58,6 +59,8 @@ pub struct Store {
     pub microphones: Signal<Microphones>,
     /// crown-voiced, as far as the Voice page's status row is concerned.
     pub voice: Signal<VoiceState>,
+    /// crownos-updated: the next release and the update step in progress.
+    pub updates: Signal<UpdatesState>,
 }
 
 impl Store {
@@ -86,6 +89,7 @@ impl Store {
             plugins: runtime.signal(PluginsState::default()),
             microphones: runtime.signal(Microphones::default()),
             voice: runtime.signal(VoiceState::default()),
+            updates: runtime.signal(UpdatesState::default()),
         }
     }
 
@@ -102,6 +106,7 @@ impl Store {
         crownlink_worker(cx, self.cross_device);
         plugins_worker(cx, self.plugins);
         voice_worker(cx, self.voice);
+        updates_worker(cx, self.updates);
     }
 
     // --- MARK: Config delegation ---

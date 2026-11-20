@@ -12,6 +12,8 @@ pub mod follow_watch;
 pub mod home;
 pub mod jpeg;
 pub mod lucide;
+pub mod markdown;
+pub mod os_release;
 pub mod persist;
 pub mod pixmap;
 pub mod qr;

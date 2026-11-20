@@ -41,6 +41,8 @@ pub mod crownlink;
 pub mod memory;
 pub mod outputs;
 pub mod plugins;
+pub mod session;
+pub mod updates;
 pub mod voice;
 pub mod wallpaper;
 pub mod wifi;
