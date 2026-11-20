@@ -248,9 +248,9 @@ fn profile_frames() {
         });
     });
     profiler.open("Display", &mut Vec::new());
-    profiler.measure("edit Brightness on Display", |profiler, frames| {
+    profiler.measure("edit Night Light warmth on Display", |profiler, frames| {
         profiler.edit_each_frame(frames, |cx, store, value| {
-            store.set(cx, display::Brightness, value * 100.0);
+            store.set(cx, display::NightLightWarmth, value * 100.0);
         });
     });
     profiler.measure("edit lock Dim on Display", |profiler, frames| {

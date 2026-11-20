@@ -528,3 +528,14 @@ fn a_remote_screen_offers_no_shell_surfaces() {
     assert!(!app.exists(role(Role::Switch).name("Show bar")));
     assert!(!app.exists(role(Role::Switch).name("Use as primary")));
 }
+
+/// Brightness is per monitor now: the selected monitor's card has the
+/// slider, and the page leads with the workspace scope.
+#[test]
+fn the_selected_monitor_has_its_own_brightness() {
+    let mut app = window(ordinal_of("Display"), true);
+    app.settle();
+    assert!(app.exists(role(Role::Slider).name("Brightness")));
+    let scope = app.find(role(Role::ComboBox).name("Workspaces"));
+    assert_eq!(scope.value.as_deref(), Some("Each monitor on its own"));
+}

@@ -9,8 +9,9 @@
 //!   out as one atomic configuration rather than a field at a time.
 //! * [`light`] is a *preference* in `display.ron`, like every other page's
 //!   controls. The compositor turns it into a gamma ramp.
-//! * [`adaptive_sync`] is a preference too, in `compositor.ron`, because the
-//!   protocol has no word for "only while a game is showing".
+//! * [`workspaces`], [`adaptive_sync`] and the shell, primary and colour rows
+//!   of [`selected`] are preferences in `compositor.ron`.
+//! * Brightness goes to the compositor over `crownos_output_brightness_v1`.
 
 mod adaptive_sync;
 mod arrangement;
@@ -18,6 +19,7 @@ mod light;
 mod monitors;
 mod output_names;
 mod selected;
+mod workspaces;
 
 use crownui::kit::icons;
 use crownui::prelude::{AnyView, Cx, IntoProp, View};
@@ -30,7 +32,17 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Display",
     slug: "display",
     icon: icons::MONITOR,
-    keywords: &["adaptive sync", "vrr", "freesync", "variable refresh rate"],
+    keywords: &[
+        "adaptive sync",
+        "vrr",
+        "freesync",
+        "variable refresh rate",
+        "brightness",
+        "primary monitor",
+        "arrangement",
+        "workspaces",
+        "hdr",
+    ],
     build,
 };
 
@@ -38,9 +50,9 @@ fn build(cx: &mut Cx, store: Store) -> AnyView {
     page(
         &PAGE,
         (
+            workspaces::card(cx, store),
             monitors::card(cx, store),
             selected::card(store),
-            light::brightness_card(cx, store),
             light::night_light_card(cx, store),
         ),
     )

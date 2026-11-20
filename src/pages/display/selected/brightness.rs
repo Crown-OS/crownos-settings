@@ -4,7 +4,7 @@ use crownui::prelude::{Cx, Semantic, Signal, View, vstack};
 
 use crate::controls::stepped_slider;
 use crate::layout::{setting_row_desc, settings_divider};
-use crate::net::outputs::{BrightnessControl, OutputState};
+use crate::net::outputs::{Brightness, BrightnessControl, OutputState};
 use crate::util::bridge::bridge;
 
 const PERCENT: f32 = 100.0;
@@ -23,7 +23,7 @@ pub fn row(
                 outputs
                     .monitor(&reading)
                     .and_then(|monitor| monitor.brightness)
-                    .map_or(PERCENT, |brightness| brightness.level * PERCENT)
+                    .map_or(PERCENT, |Brightness { level, .. }| level * PERCENT)
             })
         },
         move |runtime, percent| {
@@ -37,7 +37,9 @@ pub fn row(
         setting_row_desc(
             "Brightness",
             control.label(),
-            stepped_slider(level, 0.0, PERCENT, 1.0).disabled(control == BrightnessControl::Fixed),
+            stepped_slider(level, 0.0, PERCENT, 1.0)
+                .label("Brightness")
+                .disabled(control == BrightnessControl::Fixed),
         ),
     ))
 }

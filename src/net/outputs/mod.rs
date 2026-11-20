@@ -48,8 +48,8 @@ use tokio::time::{Instant, sleep_until};
 
 use crate::util::worker::{MessageProxy, spawn_worker};
 pub use monitor::{
-    BrightnessControl, InfoState, Mode, Monitor, MonitorDraft, Rect, Transform, beside, bounds,
-    intersects, logical_size,
+    Brightness, BrightnessControl, InfoState, Mode, Monitor, MonitorDraft, Rect, Transform, beside,
+    bounds, intersects, logical_size,
 };
 
 /// How long a newly applied arrangement has to be confirmed before it is

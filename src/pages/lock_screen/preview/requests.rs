@@ -175,18 +175,26 @@ impl State {
         })
     }
 
-    /// The logical size of the first monitor in use.
+    /// The logical size of the primary monitor, else of the first one in use.
     pub(super) fn output(self, runtime: &mut Runtime) -> [f32; 2] {
-        self.store
-            .outputs
-            .with(runtime, |outputs| {
+        let has_area = |(width, height): &(i32, i32)| *width > 0 && *height > 0;
+        let primary = self.store.with_primary_monitor(runtime, |primary| {
+            primary
+                .map(|monitor| monitor.logical_size())
+                .filter(has_area)
+        });
+        let first = || {
+            self.store.outputs.with(runtime, |outputs| {
                 outputs
                     .monitors
                     .iter()
                     .filter(|monitor| monitor.enabled)
                     .map(|monitor| monitor.logical_size())
-                    .find(|(width, height)| *width > 0 && *height > 0)
+                    .find(has_area)
             })
+        };
+        primary
+            .or_else(first)
             .map_or(FALLBACK_OUTPUT, |(width, height)| {
                 [width as f32, height as f32]
             })

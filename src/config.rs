@@ -11,7 +11,7 @@
 //!   value, and they persist what they changed. "Mutate the field but forget to
 //!   write the file" stops being a mistake a caller is able to make.
 //!
-//! Each section is one `Signal`, so a control bound to `display::Brightness`
+//! Each section is one `Signal`, so a control bound to `display::NightLight`
 //! re-reads when `display.ron` changes and never when `sound.ron` does.
 //!
 //! Adding a section is one line in the [`sections!`] invocation at the bottom of
