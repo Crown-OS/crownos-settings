@@ -2,7 +2,7 @@
 
 use crownos_config::schema::{Compositor, OutputSetting, ShellRole};
 use crownui::kit::toggle;
-use crownui::prelude::{Cx, Runtime, View, vstack};
+use crownui::prelude::{Cx, Runtime, Semantic, View, vstack};
 
 use super::super::output_names::OutputNames;
 use crate::layout::{setting_row_desc, settings_divider};
@@ -62,7 +62,7 @@ fn primary_row(cx: &mut Cx, store: Store, name: String, names: OutputNames) -> i
     setting_row_desc(
         "Use as primary",
         "The dock and notifications show here unless set otherwise",
-        toggle(on),
+        toggle(on).label("Use as primary"),
     )
 }
 
@@ -92,7 +92,7 @@ fn role_row(
             });
         },
     );
-    setting_row_desc(title, description, toggle(on))
+    setting_row_desc(title, description, toggle(on).label(title))
 }
 
 fn role_choice(setting: &mut OutputSetting, role: ShellRole) -> &mut Option<bool> {

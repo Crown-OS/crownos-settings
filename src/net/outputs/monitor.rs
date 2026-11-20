@@ -223,6 +223,26 @@ pub fn logical_size(mode: Option<&Mode>, scale: f64, transform: Transform) -> (i
     }
 }
 
+/// The smallest box around every rectangle with an area, as its top-left and
+/// bottom-right corners.
+pub fn bounds(rects: &[Rect]) -> Option<((i32, i32), (i32, i32))> {
+    rects
+        .iter()
+        .filter(|(_, (width, height))| *width > 0 && *height > 0)
+        .map(|((x, y), (width, height))| ((*x, *y), (x + width, y + height)))
+        .reduce(|(low, high), (other_low, other_high)| {
+            (
+                (low.0.min(other_low.0), low.1.min(other_low.1)),
+                (high.0.max(other_high.0), high.1.max(other_high.1)),
+            )
+        })
+}
+
+/// Right of every rectangle in `rects`, level with the highest one.
+pub fn beside(rects: &[Rect]) -> (i32, i32) {
+    bounds(rects).map_or((0, 0), |((_, top), (right, _))| (right, top))
+}
+
 pub fn intersects(left: Rect, right: Rect) -> bool {
     let (((lx, ly), (lw, lh)), ((rx, ry), (rw, rh))) = (left, right);
     lx < rx + rw && rx < lx + lw && ly < ry + rh && ry < ly + lh

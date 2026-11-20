@@ -7,7 +7,7 @@
 use crownui::kit::{button, toggle};
 use crownui::prelude::{Cx, Listeners, Signal, View, bind, for_each, hstack};
 
-use super::status_row;
+use super::{arrangement, status_row};
 use crate::layout::{
     optional, setting_row_content, setting_row_desc, settings_card_titled, value_text, when,
 };
@@ -28,6 +28,10 @@ pub fn card(cx: &mut Cx, store: Store) -> impl View + use<> {
             optional(
                 move |runtime| outputs.with(runtime, arrangement_status),
                 |_, status| status_row(status),
+            ),
+            when(
+                move |runtime| outputs.with(runtime, |outputs| !outputs.monitors.is_empty()),
+                move |cx| setting_row_content(arrangement::canvas_row(cx, store)),
             ),
             for_each(
                 monitors,

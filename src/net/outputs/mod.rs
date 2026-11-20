@@ -22,15 +22,15 @@
 //! reason the page drives the compositor over it rather than by writing the
 //! config file.
 //!
-//! ## Monitors are packed, not placed
+//! ## Placed by hand, packed when an edit makes them collide
 //!
-//! The page has no arrangement editor, so a draft carries whatever position
-//! the compositor reported. That position stops being valid the moment the
-//! monitor's *size* changes — a coarser scale, a bigger mode, a rotation —
-//! and a compositor is right to refuse an arrangement whose monitors overlap.
-//! So [`OutputState::edit`] repacks the drafts left to right whenever the
-//! edit has made them collide, which is also what makes switching a monitor
-//! back on work: a disabled head is reported at the origin, on top of
+//! The arrangement canvas places monitors with [`OutputState::place`], which
+//! never repacks. A position stops being valid the moment a monitor's *size*
+//! changes — a coarser scale, a bigger mode, a rotation — and a compositor is
+//! right to refuse an arrangement whose monitors overlap. So
+//! [`OutputState::edit`] repacks the drafts left to right whenever such an
+//! edit has made them collide. A monitor switched back on goes right of the
+//! others first: a disabled head is reported at the origin, on top of
 //! everything else.
 
 mod brightness;
@@ -48,7 +48,8 @@ use tokio::time::{Instant, sleep_until};
 
 use crate::util::worker::{MessageProxy, spawn_worker};
 pub use monitor::{
-    BrightnessControl, InfoState, Mode, Monitor, MonitorDraft, Rect, Transform, intersects,
+    BrightnessControl, InfoState, Mode, Monitor, MonitorDraft, Rect, Transform, beside, bounds,
+    intersects, logical_size,
 };
 
 /// How long a newly applied arrangement has to be confirmed before it is
@@ -240,14 +241,16 @@ impl OutputState {
     }
 
     /// Lays the enabled monitors out in one row, left to right, keeping the
-    /// order they are already in.
-    ///
-    /// The page offers no way to place a monitor, so this is the only
-    /// arrangement it can express — and it is the one the compositor would
-    /// have picked for an output it had to place itself.
+    /// order they are already in. A remote screen stays where it is.
     fn repack(&mut self) {
         let mut order: Vec<usize> = (0..self.drafts.len())
-            .filter(|index| self.drafts[*index].enabled)
+            .filter(|index| {
+                let draft = &self.drafts[*index];
+                draft.enabled
+                    && self
+                        .monitor(&draft.name)
+                        .is_some_and(|monitor| !monitor.is_virtual())
+            })
             .collect();
         order.sort_by_key(|index| self.drafts[*index].position.0);
 
@@ -261,6 +264,26 @@ impl OutputState {
             self.drafts[index].position = (x, 0);
             x += width;
         }
+    }
+
+    /// Where each enabled monitor other than `except` is, by its draft.
+    pub fn enabled_rects(&self, except: &str) -> Vec<Rect> {
+        self.drafts
+            .iter()
+            .filter(|draft| draft.enabled && draft.name != except)
+            .filter_map(|draft| Some(draft.geometry(self.monitor(&draft.name)?)))
+            .collect()
+    }
+
+    /// Moves monitors to positions the user chose, and asks whether the
+    /// result would work. Never repacks.
+    pub fn place<'a>(&mut self, positions: impl IntoIterator<Item = (&'a str, (i32, i32))>) {
+        for (name, position) in positions {
+            if let Some(draft) = self.drafts.iter_mut().find(|draft| draft.name == name) {
+                draft.position = position;
+            }
+        }
+        self.test();
     }
 
     /// The primary monitor: the one `configured` names, else the one the
@@ -318,13 +341,19 @@ impl OutputState {
         let Some(draft) = self.drafts.iter_mut().find(|draft| draft.name == name) else {
             return;
         };
+        let was_enabled = draft.enabled;
         edit(draft);
+        if !was_enabled && draft.enabled {
+            let position = beside(&self.enabled_rects(name));
+            if let Some(draft) = self.drafts.iter_mut().find(|draft| draft.name == name) {
+                draft.position = position;
+            }
+        }
 
-        // A coarser scale, a bigger mode, a rotation or a monitor coming back
-        // on can all leave two of them on the same pixels. Repacking only
-        // once that has actually happened leaves an arrangement made
-        // elsewhere — stacked monitors, a deliberate gap — alone for as long
-        // as it still works.
+        // A coarser scale, a bigger mode or a rotation can leave two of them
+        // on the same pixels. Repacking only once that has actually happened
+        // leaves an arrangement made elsewhere — stacked monitors, a
+        // deliberate gap — alone for as long as it still works.
         if self.overlaps() {
             self.repack();
         }
@@ -733,6 +762,60 @@ mod tests {
         assert_eq!(
             state.draft("DP-2").map(|draft| draft.position),
             Some((1920, 0))
+        );
+    }
+
+    #[test]
+    fn a_monitor_switched_back_on_goes_right_of_a_stacked_arrangement() {
+        let mut off = monitor("DP-3", (0, 0));
+        off.enabled = false;
+        let mut state = loaded(vec![
+            monitor("DP-1", (0, 0)),
+            monitor("DP-2", (0, 1080)),
+            off,
+        ]);
+
+        state.edit("DP-3", |draft| draft.enabled = true);
+
+        assert_eq!(
+            state.draft("DP-2").map(|draft| draft.position),
+            Some((0, 1080)),
+            "the stack stays a stack"
+        );
+        assert_eq!(
+            state.draft("DP-3").map(|draft| draft.position),
+            Some((1920, 0))
+        );
+    }
+
+    #[test]
+    fn placing_a_monitor_never_repacks() {
+        let mut state = loaded(vec![monitor("DP-1", (0, 0)), monitor("DP-2", (1920, 0))]);
+        state.place([("DP-2", (0, 1080)), ("Gone-1", (5, 5))]);
+
+        assert_eq!(
+            state.draft("DP-2").map(|draft| draft.position),
+            Some((0, 1080))
+        );
+        assert!(state.is_dirty());
+    }
+
+    #[test]
+    fn repacking_leaves_a_remote_screen_where_it_is() {
+        let mut state = loaded(vec![
+            monitor("DP-1", (0, 0)),
+            monitor("DP-2", (1920, 0)),
+            monitor("VIRTUAL-1", (0, 2000)),
+        ]);
+        state.edit("DP-1", |draft| draft.scale = 1.0);
+
+        assert_eq!(
+            state.draft("VIRTUAL-1").map(|draft| draft.position),
+            Some((0, 2000))
+        );
+        assert_eq!(
+            state.draft("DP-2").map(|draft| draft.position),
+            Some((3840, 0))
         );
     }
 

@@ -2,7 +2,7 @@
 
 use crownos_config::schema::Compositor;
 use crownui::kit::toggle;
-use crownui::prelude::{Cx, Runtime, Signal, View, bind, vstack};
+use crownui::prelude::{Cx, Runtime, Semantic, Signal, View, bind, vstack};
 
 use super::super::output_names::OutputNames;
 use crate::layout::{setting_row, setting_row_desc, settings_divider, value_text};
@@ -45,7 +45,11 @@ pub fn deep_color_row(
     });
     vstack((
         settings_divider(),
-        setting_row_desc("10-bit colour", description, toggle(on)),
+        setting_row_desc(
+            "10-bit colour",
+            description,
+            toggle(on).label("10-bit colour"),
+        ),
     ))
 }
 

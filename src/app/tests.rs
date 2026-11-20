@@ -7,6 +7,7 @@ use crownui::prelude::component;
 
 use super::fixtures::populate;
 use super::root::shell;
+use crate::net::outputs::{InfoState, Mode, Monitor, Transform};
 use crate::net::updates::{ApplyStep, DownloadStatus, InProgress};
 use crate::pages;
 use crate::state::Store;
@@ -425,4 +426,105 @@ fn an_interrupted_update_offers_only_to_continue() {
     assert_eq!(app.count(role(Role::Button).name("Continue update")), 2);
     assert!(!app.exists(role(Role::Button).name("Update now")));
     assert!(!app.exists(role(Role::Button).name("Download")));
+}
+
+fn side_by_side() -> Vec<Monitor> {
+    ["DP-1", "DP-2"]
+        .into_iter()
+        .zip([0, 1920])
+        .map(|(name, x)| Monitor {
+            name: name.to_owned(),
+            description: String::new(),
+            make: None,
+            model: None,
+            serial: None,
+            enabled: true,
+            modes: vec![Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 60_000,
+                preferred: true,
+            }],
+            current_mode: Some(0),
+            position: (x, 0),
+            scale: 1.0,
+            transform: Transform::Normal,
+            vrr_capable: false,
+            info: InfoState::Unserved,
+            brightness: None,
+        })
+        .collect()
+}
+
+fn display_with_two_monitors() -> TestApp {
+    TestApp::with_size(
+        component(move |cx| {
+            let store = Store::defaults(cx);
+            store.outputs.update(cx, |outputs| {
+                outputs.monitors = side_by_side();
+                outputs.reset_drafts();
+                outputs.loaded = true;
+                outputs.selected = Some("DP-1".to_owned());
+            });
+            shell(cx, store, ordinal_of("Display"))
+        }),
+        WIDTH,
+        HEIGHT,
+    )
+}
+
+/// Dragging a monitor on the arrangement selects it and leaves an
+/// unapplied change; the page offers Apply.
+#[test]
+fn dragging_a_monitor_on_the_arrangement_drafts_its_new_place() {
+    let mut app = display_with_two_monitors();
+    app.settle();
+    let arrangement = role(Role::Image)
+        .name("Monitor arrangement: drag a monitor to move it, click it to select it");
+    let bounds = app.find(arrangement).bounds;
+    let right_monitor = (
+        bounds.origin.x + bounds.size.width * 0.75,
+        bounds.origin.y + bounds.size.height / 2.0,
+    );
+    assert!(!app.exists(text("Unapplied changes")));
+
+    app.pointer_down(right_monitor.0, right_monitor.1);
+    for step in 1..=10 {
+        let travel = step as f32 * 8.0;
+        app.pointer_move(right_monitor.0, right_monitor.1 + travel);
+    }
+    app.pointer_up(right_monitor.0, right_monitor.1 + 80.0);
+    app.settle();
+
+    assert!(
+        app.exists(text("Unapplied changes")),
+        "the drag did not reach the drafts:\n{}",
+        app.semantics_snapshot()
+    );
+    assert!(app.exists(role(Role::Switch).name("Show dock")));
+}
+
+/// A remote screen keeps its place on the arrangement but offers no shell
+/// surfaces, primary or brightness.
+#[test]
+fn a_remote_screen_offers_no_shell_surfaces() {
+    let mut app = TestApp::with_size(
+        component(move |cx| {
+            let store = Store::defaults(cx);
+            store.outputs.update(cx, |outputs| {
+                let mut monitors = side_by_side();
+                monitors[1].name = "VIRTUAL-1".to_owned();
+                outputs.monitors = monitors;
+                outputs.reset_drafts();
+                outputs.loaded = true;
+                outputs.selected = Some("VIRTUAL-1".to_owned());
+            });
+            shell(cx, store, ordinal_of("Display"))
+        }),
+        WIDTH,
+        HEIGHT,
+    );
+    app.settle();
+    assert!(!app.exists(role(Role::Switch).name("Show bar")));
+    assert!(!app.exists(role(Role::Switch).name("Use as primary")));
 }

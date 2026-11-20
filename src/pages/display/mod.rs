@@ -13,6 +13,7 @@
 //!   protocol has no word for "only while a game is showing".
 
 mod adaptive_sync;
+mod arrangement;
 mod light;
 mod monitors;
 mod output_names;
