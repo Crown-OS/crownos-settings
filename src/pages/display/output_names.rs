@@ -32,6 +32,19 @@ impl OutputNames {
     pub fn entry<'a>(&self, compositor: &'a mut Compositor) -> &'a mut OutputSetting {
         compositor.output_entry(&self.connector, &self.identity)
     }
+
+    /// Writes an override into one field of this monitor's entry. `None`
+    /// clears the field and never adds an entry only to do that.
+    pub fn set_override(
+        &self,
+        compositor: &mut Compositor,
+        field: impl FnOnce(&mut OutputSetting) -> &mut Option<bool>,
+        choice: Option<bool>,
+    ) {
+        if choice.is_some() || self.setting(compositor).is_some() {
+            *field(self.entry(compositor)) = choice;
+        }
+    }
 }
 
 #[cfg(test)]

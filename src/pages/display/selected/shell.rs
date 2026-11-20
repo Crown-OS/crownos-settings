@@ -72,6 +72,7 @@ fn role_row(
     (role, title, description): (ShellRole, &'static str, &'static str),
 ) -> impl View + use<> {
     let reading = names.clone();
+    let writing = name.clone();
     let on = bridge(
         cx,
         move |runtime| {
@@ -85,12 +86,26 @@ fn role_row(
             })
         },
         move |runtime, on| {
+            let primary = is_primary(runtime, store, &writing);
             store.update(runtime, |compositor: &mut Compositor| {
-                *role_choice(names.entry(compositor), role) = Some(on);
+                show_role(compositor, &names, role, on, primary);
             });
         },
     );
     setting_row_desc(title, description, toggle(on).label(title))
+}
+
+/// What the default gives is stored as no choice, so the monitor follows the
+/// default again if its primary status changes.
+fn show_role(
+    compositor: &mut Compositor,
+    names: &OutputNames,
+    role: ShellRole,
+    shown: bool,
+    primary: bool,
+) {
+    let choice = (shown != role.default_shown(primary)).then_some(shown);
+    names.set_override(compositor, |setting| role_choice(setting, role), choice);
 }
 
 fn role_choice(setting: &mut OutputSetting, role: ShellRole) -> &mut Option<bool> {
@@ -98,5 +113,60 @@ fn role_choice(setting: &mut OutputSetting, role: ShellRole) -> &mut Option<bool
         ShellRole::Bar => &mut setting.bar,
         ShellRole::Dock => &mut setting.dock,
         ShellRole::Notifications => &mut setting.notifications,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pages::display::output_names::names;
+
+    const IDENTITY: &str = "Dell U2720Q 7XK2";
+
+    #[test]
+    fn showing_what_the_default_shows_writes_no_choice() {
+        let monitor = names("DP-2", IDENTITY);
+        let mut compositor = Compositor::default();
+
+        show_role(&mut compositor, &monitor, ShellRole::Bar, true, false);
+        assert!(
+            compositor.outputs.is_empty(),
+            "no entry only to say nothing"
+        );
+
+        show_role(&mut compositor, &monitor, ShellRole::Bar, false, false);
+        assert_eq!(
+            monitor.setting(&compositor).and_then(|setting| setting.bar),
+            Some(false)
+        );
+
+        show_role(&mut compositor, &monitor, ShellRole::Bar, true, false);
+        assert_eq!(
+            monitor.setting(&compositor).map(|setting| setting.bar),
+            Some(None),
+            "switching the bar back on clears the override"
+        );
+    }
+
+    #[test]
+    fn the_dock_default_follows_the_primary() {
+        let monitor = names("DP-2", IDENTITY);
+        let mut compositor = Compositor::default();
+
+        show_role(&mut compositor, &monitor, ShellRole::Dock, true, false);
+        assert_eq!(
+            monitor
+                .setting(&compositor)
+                .and_then(|setting| setting.dock),
+            Some(true),
+            "a dock on a secondary monitor is an override"
+        );
+
+        show_role(&mut compositor, &monitor, ShellRole::Dock, true, true);
+        assert_eq!(
+            monitor.setting(&compositor).map(|setting| setting.dock),
+            Some(None),
+            "the primary shows the dock anyway"
+        );
     }
 }

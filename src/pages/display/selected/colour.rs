@@ -31,7 +31,7 @@ pub fn deep_color_row(
         },
         move |runtime, on| {
             store.update(runtime, |compositor: &mut Compositor| {
-                names.entry(compositor).deep_color = Some(on);
+                scan_out_deep_color(compositor, &names, on);
             });
         },
     );
@@ -48,6 +48,15 @@ pub fn deep_color_row(
             toggle(on).label("10-bit colour"),
         ),
     ))
+}
+
+/// 8 bits is the default, so switching 10-bit off clears the override.
+fn scan_out_deep_color(compositor: &mut Compositor, names: &OutputNames, on: bool) {
+    names.set_override(
+        compositor,
+        |setting| &mut setting.deep_color,
+        on.then_some(true),
+    );
 }
 
 fn scanout_bits(runtime: &mut Runtime, outputs: Signal<OutputState>, name: &str) -> Option<u32> {
@@ -80,6 +89,32 @@ pub fn hdr_row(hdr_capable: bool) -> impl View {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pages::display::output_names::names;
+
+    #[test]
+    fn switching_10_bit_off_clears_the_override() {
+        let monitor = names("DP-1", "DP-1");
+        let mut compositor = Compositor::default();
+
+        scan_out_deep_color(&mut compositor, &monitor, false);
+        assert!(compositor.outputs.is_empty());
+
+        scan_out_deep_color(&mut compositor, &monitor, true);
+        assert_eq!(
+            monitor
+                .setting(&compositor)
+                .and_then(|setting| setting.deep_color),
+            Some(true)
+        );
+
+        scan_out_deep_color(&mut compositor, &monitor, false);
+        assert_eq!(
+            monitor
+                .setting(&compositor)
+                .map(|setting| setting.deep_color),
+            Some(None)
+        );
+    }
 
     #[test]
     fn the_8_bit_note_shows_only_when_the_compositor_reported_8_bits() {
