@@ -115,6 +115,8 @@ pub enum OutputEvent {
     /// A configuration finished. A refusal never undoes the drafts: the
     /// arrangement on screen did not change, so the user can fix the edit.
     Result { outcome: Outcome, purpose: Purpose },
+    /// The applied arrangement goes back in `seconds_left` unless kept.
+    Countdown { seconds_left: u64 },
     /// The countdown expired and the previous arrangement was put back.
     Reverted,
     /// There will be no monitors: no compositor, or no support for this.
@@ -189,6 +191,14 @@ impl OutputState {
                 self.unavailable = None;
             }
             OutputEvent::Result { outcome, purpose } => self.finish(outcome, purpose),
+            OutputEvent::Countdown { seconds_left } => {
+                if let Some(Confirmation::Countdown {
+                    seconds_left: shown,
+                }) = &mut self.confirmation
+                {
+                    *shown = seconds_left;
+                }
+            }
             OutputEvent::Reverted => {
                 self.confirmation = None;
                 self.reset_drafts();
@@ -217,6 +227,15 @@ impl OutputState {
                 });
             }
             Purpose::Apply | Purpose::Revert => self.confirmation = None,
+        }
+    }
+
+    /// The seconds until an applied arrangement goes back, while it waits to
+    /// be kept.
+    pub fn seconds_to_keep(&self) -> Option<u64> {
+        match self.confirmation {
+            Some(Confirmation::Countdown { seconds_left }) => Some(seconds_left),
+            Some(Confirmation::Awaiting) | None => None,
         }
     }
 
@@ -536,6 +555,20 @@ mod tests {
             })
         );
         assert_eq!(state.error, None);
+
+        state.apply_event(OutputEvent::Countdown { seconds_left: 14 });
+        assert_eq!(state.seconds_to_keep(), Some(14));
+    }
+
+    #[test]
+    fn a_late_countdown_tick_does_not_reopen_the_prompt() {
+        let mut state = loaded(vec![monitor("DP-1", (0, 0))]);
+        state.apply();
+        state.apply_event(applied(Outcome::Succeeded));
+        state.confirm();
+
+        state.apply_event(OutputEvent::Countdown { seconds_left: 3 });
+        assert_eq!(state.confirmation, None);
     }
 
     #[test]

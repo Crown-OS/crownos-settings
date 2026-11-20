@@ -20,8 +20,8 @@ use crate::util::worker::MessageProxy;
 /// What woke the loop up.
 enum Woken {
     Command(OutputCommand),
-    /// Nobody confirmed the last arrangement.
-    Expired,
+    /// A second of the countdown passed.
+    Tick,
     /// The compositor said something, which `dispatch` has dealt with.
     Compositor,
 }
@@ -85,7 +85,9 @@ pub async fn run(proxy: MessageProxy<OutputEvent>, mut commands: UnboundedReceiv
     let mut rollback: Option<Rollback> = None;
 
     loop {
-        let deadline = rollback.as_ref().map(Rollback::deadline);
+        let tick = rollback
+            .as_ref()
+            .map(|rollback| rollback.next_tick(Instant::now()));
 
         let woken = select! {
             biased;
@@ -93,9 +95,7 @@ pub async fn run(proxy: MessageProxy<OutputEvent>, mut commands: UnboundedReceiv
                 Some(command) => Woken::Command(command),
                 None => return,
             },
-            () = sleep_until(deadline.unwrap_or_else(Instant::now)), if deadline.is_some() => {
-                Woken::Expired
-            }
+            () = sleep_until(tick.unwrap_or_else(Instant::now)), if tick.is_some() => Woken::Tick,
             result = session.dispatch(&report) => {
                 if let Err(err) = result {
                     report(OutputEvent::Unavailable(gone(&err)));
@@ -107,7 +107,17 @@ pub async fn run(proxy: MessageProxy<OutputEvent>, mut commands: UnboundedReceiv
 
         let job = match woken {
             Woken::Compositor => None,
-            Woken::Expired => rollback.take().map(|rollback| Job::revert(rollback, true)),
+            Woken::Tick => match rollback
+                .as_ref()
+                .map(|rollback| rollback.seconds_left(Instant::now()))
+            {
+                Some(0) => rollback.take().map(|rollback| Job::revert(rollback, true)),
+                Some(seconds_left) => {
+                    report(OutputEvent::Countdown { seconds_left });
+                    None
+                }
+                None => None,
+            },
             Woken::Command(OutputCommand::Test(drafts)) => Some(Job::Test(drafts)),
             Woken::Command(OutputCommand::Apply { drafts, previous }) => {
                 Some(Job::Apply { drafts, previous })

@@ -2,12 +2,15 @@
 //! no daemons — a defaults store, optionally populated as if every backend had
 //! spoken.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use crowntest::{Role, TestApp, role, text};
 use crownui::prelude::component;
 
 use super::fixtures::populate;
 use super::root::shell;
-use crate::net::outputs::{InfoState, Mode, Monitor, Transform};
+use crate::net::outputs::{Confirmation, InfoState, Mode, Monitor, Transform};
 use crate::net::updates::{ApplyStep, DownloadStatus, InProgress};
 use crate::pages;
 use crate::state::Store;
@@ -564,4 +567,49 @@ fn the_primary_moves_and_never_switches_off_in_place() {
     app.settle();
     let state = app.find(primary()).states;
     assert!(state.checked == Some(true) && state.disabled, "{state:?}");
+}
+
+/// The keep prompt says how long is left, one second at a time.
+#[test]
+fn the_keep_prompt_counts_down() {
+    let outputs_slot = Rc::new(Cell::new(None));
+    let slot = Rc::clone(&outputs_slot);
+    let mut app = TestApp::with_size(
+        component(move |cx| {
+            let store = Store::defaults(cx);
+            store.outputs.update(cx, |outputs| {
+                outputs.monitors = side_by_side();
+                outputs.reset_drafts();
+                outputs.loaded = true;
+                outputs.confirmation = Some(Confirmation::Countdown { seconds_left: 15 });
+            });
+            slot.set(Some(store.outputs));
+            shell(cx, store, ordinal_of("Display"))
+        }),
+        WIDTH,
+        HEIGHT,
+    );
+    app.settle();
+    let prompt = |seconds: &str| {
+        text(format!(
+            "Keep these display settings? They go back in {seconds}."
+        ))
+    };
+    assert!(
+        app.exists(prompt("15 seconds")),
+        "{}",
+        app.semantics_snapshot()
+    );
+
+    let Some(outputs) = outputs_slot.get() else {
+        panic!("the page was never built");
+    };
+    for (seconds_left, shown) in [(14, "14 seconds"), (1, "1 second")] {
+        outputs.update(app.ui().cx(), |outputs| {
+            outputs.confirmation = Some(Confirmation::Countdown { seconds_left });
+        });
+        app.settle();
+        assert!(app.exists(prompt(shown)), "{}", app.semantics_snapshot());
+    }
+    assert!(app.exists(role(Role::Button).name("Keep")));
 }

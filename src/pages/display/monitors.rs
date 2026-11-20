@@ -11,7 +11,7 @@ use super::{arrangement, status_row};
 use crate::layout::{
     optional, setting_row_content, setting_row_desc, settings_card_titled, value_text, when,
 };
-use crate::net::outputs::{Confirmation, Monitor, MonitorDraft, OutputState, REVERT_AFTER};
+use crate::net::outputs::{Monitor, MonitorDraft, OutputState};
 use crate::state::Store;
 use crate::util::bridge::{bridge, derived};
 
@@ -126,19 +126,13 @@ fn summary(monitor: &Monitor, draft: Option<&MonitorDraft>) -> String {
 /// "Keep these display settings?", shown while a countdown is running.
 fn confirm_actions(outputs: Signal<OutputState>) -> impl View {
     when(
-        move |runtime| {
-            outputs.with(runtime, |outputs| {
-                matches!(outputs.confirmation, Some(Confirmation::Countdown { .. }))
-            })
-        },
+        move |runtime| outputs.with(runtime, |outputs| outputs.seconds_to_keep().is_some()),
         move |_| {
-            // The window is named rather than counted down: what the user has
-            // to know is that doing nothing is safe, not how many seconds are
-            // left.
-            let prompt = format!(
-                "Keep these display settings? They go back in {} seconds.",
-                REVERT_AFTER.as_secs()
-            );
+            let prompt = bind(move |runtime| {
+                outputs.with(runtime, |outputs| {
+                    keep_prompt(outputs.seconds_to_keep().unwrap_or_default())
+                })
+            });
             setting_row_content(hstack((
                 value_text(prompt),
                 button("Keep").on_click(move |cx, _| outputs.update(cx, OutputState::confirm)),
@@ -146,6 +140,15 @@ fn confirm_actions(outputs: Signal<OutputState>) -> impl View {
             )))
         },
     )
+}
+
+fn keep_prompt(seconds_left: u64) -> String {
+    let unit = if seconds_left == 1 {
+        "second"
+    } else {
+        "seconds"
+    };
+    format!("Keep these display settings? They go back in {seconds_left} {unit}.")
 }
 
 /// Hidden from Apply until the arrangement is kept, refused or put back:
