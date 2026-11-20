@@ -16,7 +16,7 @@ use super::editor::EditMode;
 use super::playback::{Mode, Playback};
 use super::studio::{Shelf, paint_now};
 use super::{FALLBACK_OUTPUT, Preview, Sheet, State};
-use crate::net::outputs::{Mode as OutputMode, Monitor, Transform as OutputTransform};
+use crate::net::outputs::{InfoState, Mode as OutputMode, Monitor, Transform as OutputTransform};
 use crate::pages::lock_screen::editor;
 use crate::state::Store;
 
@@ -228,6 +228,8 @@ fn monitor([width, height]: [i32; 2]) -> Monitor {
         scale: 1.0,
         transform: OutputTransform::Normal,
         vrr_capable: false,
+        info: InfoState::Unserved,
+        brightness: None,
     }
 }
 

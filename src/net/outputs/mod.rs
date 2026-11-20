@@ -33,7 +33,11 @@
 //! back on work: a disabled head is reported at the origin, on top of
 //! everything else.
 
+mod brightness;
+mod info;
+mod monitor;
 mod protocol;
+mod wl_outputs;
 
 use std::time::Duration;
 
@@ -43,6 +47,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::{Instant, sleep_until};
 
 use crate::util::worker::{MessageProxy, spawn_worker};
+pub use monitor::{
+    BrightnessControl, InfoState, Mode, Monitor, MonitorDraft, Rect, Transform, intersects,
+};
 
 /// How long a newly applied arrangement has to be confirmed before it is
 /// rolled back.
@@ -50,175 +57,6 @@ use crate::util::worker::{MessageProxy, spawn_worker};
 /// Long enough to find the mouse on a monitor that just moved, short enough
 /// that a black screen is not a reason to reboot.
 pub const REVERT_AFTER: Duration = Duration::from_secs(15);
-
-/// How a monitor is oriented.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Transform {
-    #[default]
-    Normal,
-    Rotate90,
-    Rotate180,
-    Rotate270,
-    Flipped,
-    Flipped90,
-    Flipped180,
-    Flipped270,
-}
-
-impl Transform {
-    /// The four the page offers. The flipped variants exist in the protocol
-    /// but describe mirrored panels, which is not something a user picks.
-    pub const CHOICES: [Self; 4] = [
-        Self::Normal,
-        Self::Rotate90,
-        Self::Rotate180,
-        Self::Rotate270,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Normal => "Landscape",
-            Self::Rotate90 => "Portrait",
-            Self::Rotate180 => "Landscape (flipped)",
-            Self::Rotate270 => "Portrait (flipped)",
-            Self::Flipped => "Mirrored",
-            Self::Flipped90 => "Mirrored portrait",
-            Self::Flipped180 => "Mirrored landscape",
-            Self::Flipped270 => "Mirrored portrait (flipped)",
-        }
-    }
-
-    /// Whether this orientation swaps width and height.
-    pub fn is_upright(self) -> bool {
-        matches!(
-            self,
-            Self::Rotate90 | Self::Rotate270 | Self::Flipped90 | Self::Flipped270
-        )
-    }
-}
-
-/// One mode a monitor can run at.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Mode {
-    pub width: i32,
-    pub height: i32,
-    /// Millihertz, as the protocol counts it.
-    pub refresh: i32,
-    pub preferred: bool,
-}
-
-impl Mode {
-    pub fn label(&self) -> String {
-        format!(
-            "{}×{} @ {:.2} Hz",
-            self.width,
-            self.height,
-            f64::from(self.refresh) / 1000.0
-        )
-    }
-}
-
-/// One monitor, as the page shows it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Monitor {
-    /// The connector, e.g. `"DP-1"`. Identifies it in a configuration.
-    pub name: String,
-    pub description: String,
-    pub make: Option<String>,
-    pub model: Option<String>,
-    pub serial: Option<String>,
-    pub enabled: bool,
-    pub modes: Vec<Mode>,
-    pub current_mode: Option<usize>,
-    pub position: (i32, i32),
-    pub scale: f64,
-    pub transform: Transform,
-    /// Whether the compositor said anything about adaptive sync at all, which
-    /// is what decides if the setting is offered.
-    pub vrr_capable: bool,
-}
-
-impl Monitor {
-    /// What to call this monitor in the interface.
-    ///
-    /// The make and model where the panel provided them, because "Dell U2720Q"
-    /// means something to a user and "DP-1" does not. The connector is kept
-    /// alongside, since it is what distinguishes two identical monitors.
-    pub fn title(&self) -> String {
-        match (&self.make, &self.model) {
-            (Some(make), Some(model)) => format!("{make} {model} ({})", self.name),
-            (Some(name), None) | (None, Some(name)) => format!("{name} ({})", self.name),
-            (None, None) => self.name.clone(),
-        }
-    }
-
-    /// This monitor as a draft, i.e. "leave it exactly as it is".
-    pub fn to_draft(&self) -> MonitorDraft {
-        MonitorDraft {
-            name: self.name.clone(),
-            enabled: self.enabled,
-            mode: self.current_mode,
-            position: self.position,
-            scale: self.scale,
-            transform: self.transform,
-        }
-    }
-
-    /// The desktop area it covers now, in logical pixels; zero without a mode.
-    pub fn logical_size(&self) -> (i32, i32) {
-        let mode = self.current_mode.and_then(|index| self.modes.get(index));
-        logical_size(mode, self.scale, self.transform)
-    }
-}
-
-/// A logical rectangle: where a monitor starts, and how big it is.
-type Rect = ((i32, i32), (i32, i32));
-
-/// What a mode occupies once scale and orientation are applied.
-fn logical_size(mode: Option<&Mode>, scale: f64, transform: Transform) -> (i32, i32) {
-    let Some(mode) = mode else {
-        return (0, 0);
-    };
-    let scale = if scale > 0.0 { scale } else { 1.0 };
-    let (width, height) = (
-        (f64::from(mode.width) / scale).round() as i32,
-        (f64::from(mode.height) / scale).round() as i32,
-    );
-
-    if transform.is_upright() {
-        (height, width)
-    } else {
-        (width, height)
-    }
-}
-
-fn intersects(left: Rect, right: Rect) -> bool {
-    let (((lx, ly), (lw, lh)), ((rx, ry), (rw, rh))) = (left, right);
-    lx < rx + rw && rx < lx + lw && ly < ry + rh && ry < ly + lh
-}
-
-/// What the page wants one monitor to become.
-#[derive(Debug, Clone, PartialEq)]
-pub struct MonitorDraft {
-    pub name: String,
-    pub enabled: bool,
-    pub mode: Option<usize>,
-    pub position: (i32, i32),
-    pub scale: f64,
-    pub transform: Transform,
-}
-
-impl MonitorDraft {
-    /// Where this draft would put the monitor, and how much of the desktop it
-    /// would cover. The mode list is the monitor's, so it has to be given.
-    fn geometry(&self, monitor: &Monitor) -> Rect {
-        let mode = self.mode.and_then(|index| monitor.modes.get(index));
-        (
-            self.position,
-            logical_size(mode, self.scale, self.transform),
-        )
-    }
-}
 
 /// How a configuration ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,6 +82,8 @@ pub enum OutputCommand {
     Confirm,
     /// Put the previous arrangement back now.
     Revert,
+    /// `level` is perceptual, from 0.0 to 1.0.
+    SetBrightness { name: String, level: f32 },
 }
 
 /// Everything the backend can tell the page.
@@ -423,6 +263,43 @@ impl OutputState {
         }
     }
 
+    /// The primary monitor: the one `configured` names, else the one the
+    /// compositor reports, else the top-left enabled monitor with a display.
+    pub fn primary(&self, configured: Option<&str>) -> Option<&Monitor> {
+        let configured = configured.and_then(|name| {
+            self.monitors
+                .iter()
+                .find(|monitor| monitor.enabled && monitor.is_named(name))
+        });
+        let reported = || {
+            self.monitors
+                .iter()
+                .find(|monitor| monitor.described().is_some_and(|info| info.primary))
+        };
+        let top_left = || {
+            self.monitors
+                .iter()
+                .filter(|monitor| monitor.enabled && !monitor.is_virtual())
+                .min_by_key(|monitor| (monitor.position.1, monitor.position.0))
+        };
+        configured.or_else(reported).or_else(top_left)
+    }
+
+    pub fn set_brightness(&mut self, name: &str, level: f32) {
+        if let Some(brightness) = self
+            .monitors
+            .iter_mut()
+            .find(|monitor| monitor.name == name)
+            .and_then(|monitor| monitor.brightness.as_mut())
+        {
+            brightness.level = level;
+        }
+        self.send(OutputCommand::SetBrightness {
+            name: name.to_owned(),
+            level,
+        });
+    }
+
     pub fn monitor(&self, name: &str) -> Option<&Monitor> {
         self.monitors.iter().find(|monitor| monitor.name == name)
     }
@@ -579,6 +456,10 @@ async fn run(proxy: MessageProxy<OutputEvent>, mut commands: UnboundedReceiver<O
             Woken::Command(OutputCommand::Revert) => {
                 rollback.take().map(|(previous, _)| (previous, false))
             }
+            Woken::Command(OutputCommand::SetBrightness { name, level }) => {
+                session.set_brightness(&name, level);
+                None
+            }
         };
 
         let Some((drafts, test_only)) = configuration else {
@@ -617,6 +498,8 @@ mod tests {
             scale: 2.0,
             transform: Transform::Normal,
             vrr_capable: true,
+            info: InfoState::Unserved,
+            brightness: None,
         }
     }
 
@@ -876,5 +759,81 @@ mod tests {
             "the page must stop saying it is still looking"
         );
         assert_eq!(state.unavailable.as_deref(), Some("no support"));
+    }
+
+    fn described(name: &str, identity: &str, primary: bool) -> Monitor {
+        Monitor {
+            info: InfoState::Described(monitor::OutputInfo {
+                identity: identity.into(),
+                primary,
+                scanout_bits: 8,
+                ..monitor::OutputInfo::default()
+            }),
+            ..monitor(name, (0, 0))
+        }
+    }
+
+    #[test]
+    fn the_identity_is_the_compositors_or_the_connector_without_the_protocol() {
+        assert_eq!(
+            described("DP-1", "Dell U2720Q 7XK2", false).identity(),
+            Some("Dell U2720Q 7XK2")
+        );
+        assert_eq!(monitor("DP-1", (0, 0)).identity(), Some("DP-1"));
+
+        let waiting = Monitor {
+            info: InfoState::Waiting,
+            ..monitor("DP-1", (0, 0))
+        };
+        assert_eq!(waiting.identity(), None);
+    }
+
+    #[test]
+    fn a_virtual_head_is_known_by_its_prefix_without_the_protocol() {
+        assert!(monitor("VIRTUAL-1", (0, 0)).is_virtual());
+        assert!(!monitor("DP-1", (0, 0)).is_virtual());
+        assert!(!described("VIRTUAL-1", "VIRTUAL-1", false).is_virtual());
+    }
+
+    #[test]
+    fn the_configured_primary_wins_then_the_reported_then_the_top_left() {
+        let state = loaded(vec![
+            described("DP-1", "Left 1", false),
+            described("DP-2", "Right 2", true),
+        ]);
+        let primary = |configured| {
+            state
+                .primary(configured)
+                .map(|monitor| monitor.name.as_str())
+        };
+
+        assert_eq!(primary(Some("Left 1")), Some("DP-1"));
+        assert_eq!(primary(None), Some("DP-2"));
+        assert_eq!(primary(Some("Gone 3")), Some("DP-2"));
+
+        let unserved = loaded(vec![monitor("DP-1", (1920, 0)), monitor("DP-2", (0, 0))]);
+        assert_eq!(
+            unserved.primary(None).map(|monitor| monitor.name.as_str()),
+            Some("DP-2")
+        );
+    }
+
+    #[test]
+    fn a_brightness_change_shows_at_once() {
+        let mut state = loaded(vec![Monitor {
+            brightness: Some(monitor::Brightness {
+                control: BrightnessControl::Software,
+                level: 1.0,
+            }),
+            ..monitor("DP-1", (0, 0))
+        }]);
+        state.set_brightness("DP-1", 0.4);
+        assert_eq!(
+            state.monitor("DP-1").and_then(|monitor| monitor.brightness),
+            Some(monitor::Brightness {
+                control: BrightnessControl::Software,
+                level: 0.4,
+            })
+        );
     }
 }

@@ -23,13 +23,13 @@
 //! It is cheap because [`Settings::set`] drops writes that change nothing.
 
 use crownos_config::Key;
-use crownos_config::schema::{appearance, wifi};
+use crownos_config::schema::{Compositor, appearance, wifi};
 use crownui::prelude::{Cx, Runtime, Signal};
 
 use crate::config::{Section, Settings};
 use crate::net::audio::{Microphones, follow_microphones};
 use crate::net::crownlink::{CrossDeviceState, crownlink_worker};
-use crate::net::outputs::{OutputState, output_worker};
+use crate::net::outputs::{Monitor, OutputState, output_worker};
 use crate::net::plugins::{PluginsState, plugins_worker};
 use crate::net::updates::{UpdatesState, updates_worker};
 use crate::net::voice::{VoiceState, voice_worker};
@@ -135,6 +135,21 @@ impl Store {
         K::Section: Section,
     {
         self.config.set(runtime, key, value);
+    }
+
+    /// Reads the primary monitor: the one `compositor.ron` names, else the
+    /// one the compositor reports, else the top-left one.
+    pub fn with_primary_monitor<R>(
+        self,
+        runtime: &mut Runtime,
+        read: impl FnOnce(Option<&Monitor>) -> R,
+    ) -> R {
+        let configured = self.section(runtime, |compositor: &Compositor| {
+            compositor.primary_output.clone()
+        });
+        self.outputs.with(runtime, |outputs| {
+            read(outputs.primary(configured.as_deref()))
+        })
     }
 
     // --- MARK: The seam ---

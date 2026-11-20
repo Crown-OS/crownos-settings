@@ -10,7 +10,7 @@ use crate::net::audio::{Microphone, Microphones};
 use crate::net::crownlink::{
     Battery, Device, DeviceClass, DeviceId, DeviceInfo, Edge, Feature, FeatureSet, Link, LinkKind,
 };
-use crate::net::outputs::{Mode, Monitor, Transform};
+use crate::net::outputs::{InfoState, Mode, Monitor, Transform};
 use crate::net::plugins::{
     CapabilityInfo, Decision, EntityInfo, EntityStatus, Field, Kind, Level, Link as PluginsLink,
     LogLevel, LogLine, SettingValue, SettingsSection,
@@ -137,6 +137,8 @@ fn monitors() -> Vec<Monitor> {
             scale: 2.0,
             transform: Transform::Normal,
             vrr_capable: true,
+            info: InfoState::Unserved,
+            brightness: None,
         },
         Monitor {
             name: "DP-1".to_owned(),
@@ -156,6 +158,8 @@ fn monitors() -> Vec<Monitor> {
             scale: 1.5,
             transform: Transform::Normal,
             vrr_capable: false,
+            info: InfoState::Unserved,
+            brightness: None,
         },
     ]
 }

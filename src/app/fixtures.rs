@@ -7,7 +7,7 @@ use crate::net::audio::{Microphone, Microphones};
 use crate::net::crownlink::{
     Battery, Device, DeviceClass, DeviceId, DeviceInfo, Feature, FeatureSet, Link, LinkKind,
 };
-use crate::net::outputs::{Mode, Monitor, Transform};
+use crate::net::outputs::{InfoState, Mode, Monitor, Transform};
 use crate::net::plugins::{
     CapabilityInfo, Decision, EntityInfo, EntityStatus, Field, Kind, Level, Link as PluginsLink,
     LogLevel, LogLine, SelectOption, SettingValue, SettingsSection,
@@ -115,6 +115,8 @@ pub(super) fn populate(cx: &mut Cx, store: Store) {
         scale: 1.5,
         transform: Transform::Normal,
         vrr_capable: true,
+        info: InfoState::Unserved,
+        brightness: None,
     };
     store.outputs.update(cx, |outputs| {
         outputs.drafts = vec![monitor.to_draft()];

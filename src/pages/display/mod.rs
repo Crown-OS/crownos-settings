@@ -15,6 +15,7 @@
 mod adaptive_sync;
 mod light;
 mod monitors;
+mod output_names;
 mod selected;
 
 use crownui::kit::icons;

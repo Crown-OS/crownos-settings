@@ -20,13 +20,12 @@
 use std::io::ErrorKind;
 use std::os::fd::{AsFd, AsRawFd, RawFd};
 
+use crownos_protocols::output_brightness::v1::client::crownos_output_brightness_manager_v1::CrownosOutputBrightnessManagerV1;
+use crownos_protocols::output_info::v1::client::crownos_output_info_manager_v1::CrownosOutputInfoManagerV1;
 use tokio::io::unix::AsyncFd;
 use wayland_client::{
     Connection, Dispatch, DispatchError, EventQueue, Proxy, QueueHandle, WEnum,
-    backend::WaylandError,
-    event_created_child,
-    globals::{GlobalListContents, registry_queue_init},
-    protocol::{wl_output, wl_registry},
+    backend::WaylandError, event_created_child, globals::registry_queue_init, protocol::wl_output,
 };
 use wayland_protocols_wlr::output_management::v1::client::{
     zwlr_output_configuration_head_v1::ZwlrOutputConfigurationHeadV1,
@@ -36,10 +35,12 @@ use wayland_protocols_wlr::output_management::v1::client::{
     zwlr_output_mode_v1::{self, ZwlrOutputModeV1},
 };
 
-use super::{Mode, Monitor, MonitorDraft, Outcome, OutputEvent, Transform};
+use super::wl_outputs::WaylandOutput;
+use super::{InfoState, Mode, Monitor, MonitorDraft, Outcome, OutputEvent, Transform};
 
 /// The newest manager version this client can speak. 4 adds adaptive sync.
 const VERSION: std::ops::RangeInclusive<u32> = 1..=4;
+const CROWNOS_OUTPUT_VERSION: std::ops::RangeInclusive<u32> = 1..=1;
 
 /// One live conversation with the compositor's output manager.
 pub struct Session {
@@ -72,13 +73,40 @@ impl Session {
         let readiness = AsyncFd::new(connection.as_fd().as_raw_fd())
             .map_err(|err| format!("the Wayland connection cannot be polled: {err}"))?;
 
+        let handle = queue.handle();
+        let mut state = State {
+            info_manager: globals.bind(&handle, CROWNOS_OUTPUT_VERSION, ()).ok(),
+            brightness_manager: globals.bind(&handle, CROWNOS_OUTPUT_VERSION, ()).ok(),
+            ..State::default()
+        };
+        for global in globals.contents().clone_list() {
+            state.add_output(
+                globals.registry(),
+                global.name,
+                &global.interface,
+                global.version,
+                &handle,
+            );
+        }
+
         Ok(Self {
             connection,
             readiness,
             queue,
             manager,
-            state: State::default(),
+            state,
         })
+    }
+
+    /// Ignored for a monitor whose brightness the compositor does not serve.
+    pub fn set_brightness(&self, name: &str, level: f32) {
+        if let Some(brightness) = self
+            .state
+            .output_named(name)
+            .and_then(|output| output.brightness.as_ref())
+        {
+            brightness.set_level(level);
+        }
     }
 
     /// Waits for the compositor to say something, and reports a new snapshot
@@ -162,7 +190,7 @@ impl Session {
     }
 
     fn report_snapshot(&mut self, report: &impl Fn(OutputEvent)) {
-        if self.state.take_done() {
+        if self.state.serial.is_some() && self.state.take_done() {
             report(OutputEvent::Snapshot(self.state.monitors()));
         }
     }
@@ -215,11 +243,14 @@ impl Session {
 // --- MARK: Accumulated state ---
 
 #[derive(Default)]
-struct State {
+pub struct State {
     heads: Vec<(ZwlrOutputHeadV1, Head)>,
     serial: Option<u32>,
-    done: bool,
+    pub(super) done: bool,
     outcome: Option<Outcome>,
+    pub(super) outputs: Vec<WaylandOutput>,
+    pub(super) info_manager: Option<CrownosOutputInfoManagerV1>,
+    pub(super) brightness_manager: Option<CrownosOutputBrightnessManagerV1>,
 }
 
 impl State {
@@ -235,11 +266,28 @@ impl State {
             .map(|(_, head)| head)
     }
 
+    fn info_of(&self, connector: &str) -> InfoState {
+        if self.info_manager.is_none() {
+            return InfoState::Unserved;
+        }
+        self.output_named(connector)
+            .and_then(|output| output.info.as_ref())
+            .and_then(|info| info.described())
+            .map_or(InfoState::Waiting, |info| {
+                InfoState::Described(info.clone())
+            })
+    }
+
     /// The snapshot the UI sees, with no Wayland types in it.
     fn monitors(&self) -> Vec<Monitor> {
         self.heads
             .iter()
             .map(|(_, head)| Monitor {
+                info: self.info_of(&head.name),
+                brightness: self
+                    .output_named(&head.name)
+                    .and_then(|output| output.brightness.as_ref())
+                    .and_then(|brightness| brightness.brightness()),
                 name: head.name.clone(),
                 description: head.description.clone(),
                 make: head.make.clone(),
@@ -280,18 +328,6 @@ struct Head {
 }
 
 // --- MARK: Dispatch ---
-
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
-    fn event(
-        _state: &mut Self,
-        _proxy: &wl_registry::WlRegistry,
-        _event: wl_registry::Event,
-        _data: &GlobalListContents,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-    }
-}
 
 impl Dispatch<ZwlrOutputManagerV1, ()> for State {
     fn event(

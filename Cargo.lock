@@ -800,6 +800,7 @@ dependencies = [
  "crownos-accounts",
  "crownos-config",
  "crownos-ipc",
+ "crownos-protocols",
  "crownos-voice-protocol",
  "crownpaper",
  "crownplugin-model",

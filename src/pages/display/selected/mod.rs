@@ -1,6 +1,7 @@
 //! Resolution, refresh, scale, orientation and adaptive sync, for the one
-//! monitor the user picked out of the list. Adaptive sync is the odd one out:
-//! see [`adaptive_sync`](super::adaptive_sync).
+//! monitor the user picked out of the list or on the arrangement, then its
+//! brightness, colour and shell surfaces. Adaptive sync and everything after
+//! brightness is in `compositor.ron`: see [`adaptive_sync`](super::adaptive_sync).
 //!
 //! Every choice here is offered as a list of rows, and every one of those
 //! lists has the same rule: whatever the monitor is *actually* on gets a row,
@@ -11,9 +12,14 @@
 use crownui::kit::select;
 use crownui::prelude::{Cx, IntoProp, Runtime, Semantic, Signal, View, bind, vstack};
 
-use super::adaptive_sync::{self, OutputNames};
-use crate::layout::{optional, setting_row, settings_card_titled, settings_divider, when};
-use crate::net::outputs::{MonitorDraft, OutputState, Transform};
+mod brightness;
+mod colour;
+mod shell;
+
+use super::adaptive_sync;
+use super::output_names::OutputNames;
+use crate::layout::{optional, setting_row, settings_card_titled, settings_divider};
+use crate::net::outputs::{BrightnessControl, MonitorDraft, OutputState, Transform};
 use crate::state::Store;
 use crate::util::bridge::{bridge, derived};
 
@@ -31,7 +37,11 @@ struct Selection {
     title: String,
     modes: Vec<String>,
     vrr_capable: bool,
-    output_names: OutputNames,
+    output_names: Option<OutputNames>,
+    is_virtual: bool,
+    /// `None` when the compositor has not said.
+    hdr_capable: Option<bool>,
+    brightness_control: Option<BrightnessControl>,
 }
 
 fn selection(outputs: &OutputState) -> Option<Selection> {
@@ -43,6 +53,9 @@ fn selection(outputs: &OutputState) -> Option<Selection> {
         modes: monitor.modes.iter().map(|mode| mode.label()).collect(),
         vrr_capable: monitor.vrr_capable,
         output_names: OutputNames::of(monitor),
+        is_virtual: monitor.is_virtual(),
+        hdr_capable: monitor.described().map(|info| info.hdr_capable),
+        brightness_control: monitor.brightness.map(|brightness| brightness.control),
         name,
     })
 }
@@ -58,7 +71,19 @@ pub fn card(store: Store) -> impl View {
                 modes,
                 vrr_capable,
                 output_names,
+                is_virtual,
+                hdr_capable,
+                brightness_control,
             } = selected;
+            let physical_names = output_names.clone().filter(|_| !is_virtual);
+            let brightness = brightness_control
+                .filter(|_| !is_virtual)
+                .map(|control| brightness::row(cx, outputs, name.clone(), control));
+            let deep_color = physical_names
+                .clone()
+                .map(|names| colour::deep_color_row(cx, store, name.clone(), names));
+            let hdr = hdr_capable.map(colour::hdr_row);
+            let shell = physical_names.map(|names| shell::rows(cx, store, name.clone(), names));
             let draft = Draft { outputs, name };
             settings_card_titled(
                 &title,
@@ -68,15 +93,19 @@ pub fn card(store: Store) -> impl View {
                     setting_row("Scale", scale(cx, draft.clone())),
                     settings_divider(),
                     setting_row("Orientation", orientation(cx, draft.clone())),
-                    when(
-                        move |_| vrr_capable,
-                        move |cx| {
+                    optional(
+                        move |_| output_names.clone().filter(|_| vrr_capable),
+                        move |cx, names| {
                             vstack((
                                 settings_divider(),
-                                adaptive_sync::row(cx, store, output_names.clone(), draft.off()),
+                                adaptive_sync::row(cx, store, names, draft.off()),
                             ))
                         },
                     ),
+                    brightness,
+                    deep_color,
+                    hdr,
+                    shell,
                 ),
             )
         },

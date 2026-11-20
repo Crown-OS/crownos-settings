@@ -4,12 +4,12 @@
 //! `zwlr_output_management_v1`: the protocol only knows on and off, and the
 //! mode worth having — on while a game is showing — is neither.
 
-use crownos_config::schema::{Compositor, OutputSetting, Vrr};
+use crownos_config::schema::{Compositor, Vrr};
 use crownui::prelude::{Cx, IntoProp, Semantic, View};
 
+use super::output_names::OutputNames;
 use crate::controls::{Options, field_choice};
 use crate::layout::setting_row_desc;
-use crate::net::outputs::Monitor;
 use crate::state::Store;
 
 static VRR_MODES: Options<Vrr> = Options::new(&[
@@ -18,56 +18,11 @@ static VRR_MODES: Options<Vrr> = Options::new(&[
     ("Always", Vrr::On),
 ]);
 
-/// The two names `compositor.ron` may file a monitor under, in the order the
-/// compositor looks them up.
-#[derive(Debug, Clone, PartialEq)]
-pub struct OutputNames {
-    connector: String,
-    edid: Option<String>,
-}
-
-impl OutputNames {
-    /// The EDID name is the compositor's: make, model and serial, and only
-    /// when the panel reports a serial.
-    pub fn of(monitor: &Monitor) -> Self {
-        let edid = match (&monitor.make, &monitor.model, &monitor.serial) {
-            (Some(make), Some(model), Some(serial)) if !serial.is_empty() => {
-                Some(format!("{make} {model} {serial}"))
-            }
-            _ => None,
-        };
-        Self {
-            connector: monitor.name.clone(),
-            edid,
-        }
-    }
-
-    fn position_in(&self, outputs: &[OutputSetting]) -> Option<usize> {
-        outputs
-            .iter()
-            .position(|setting| setting.name == self.connector)
-            .or_else(|| {
-                let edid = self.edid.as_deref()?;
-                outputs.iter().position(|setting| setting.name == edid)
-            })
-    }
-
-    fn vrr_in(&self, outputs: &[OutputSetting]) -> Vrr {
-        self.position_in(outputs)
-            .and_then(|index| outputs[index].vrr)
-            .unwrap_or_default()
-    }
-
-    fn set_vrr_in(&self, outputs: &mut Vec<OutputSetting>, mode: Vrr) {
-        match self.position_in(outputs) {
-            Some(index) => outputs[index].vrr = Some(mode),
-            None => outputs.push(OutputSetting {
-                name: self.edid.as_ref().unwrap_or(&self.connector).clone(),
-                vrr: Some(mode),
-                ..OutputSetting::default()
-            }),
-        }
-    }
+fn vrr_of(names: &OutputNames, compositor: &Compositor) -> Vrr {
+    names
+        .setting(compositor)
+        .and_then(|setting| setting.vrr)
+        .unwrap_or_default()
 }
 
 /// Only offered for a monitor the compositor said something about adaptive
@@ -85,12 +40,12 @@ pub fn row<Off: IntoProp<bool> + 'static>(
         &VRR_MODES,
         move |runtime| {
             store.section(runtime, |compositor: &Compositor| {
-                reading.vrr_in(&compositor.outputs)
+                vrr_of(&reading, compositor)
             })
         },
         move |runtime, mode| {
             store.update(runtime, |compositor: &mut Compositor| {
-                names.set_vrr_in(&mut compositor.outputs, mode);
+                names.entry(compositor).vrr = Some(mode);
             });
         },
     );
@@ -104,15 +59,12 @@ pub fn row<Off: IntoProp<bool> + 'static>(
 #[cfg(test)]
 mod tests {
     use crownos_config::DynSection;
+    use crownos_config::schema::OutputSetting;
 
     use super::*;
+    use crate::pages::display::output_names::names;
 
-    fn names(edid: Option<&str>) -> OutputNames {
-        OutputNames {
-            connector: "DP-1".into(),
-            edid: edid.map(str::to_owned),
-        }
-    }
+    const IDENTITY: &str = "Dell U2720Q 7XYZ";
 
     fn setting(name: &str, vrr: Option<Vrr>) -> OutputSetting {
         OutputSetting {
@@ -122,28 +74,35 @@ mod tests {
         }
     }
 
+    fn with_outputs(outputs: Vec<OutputSetting>) -> Compositor {
+        Compositor {
+            outputs,
+            ..Compositor::default()
+        }
+    }
+
     #[test]
     fn an_unconfigured_monitor_reads_as_on_demand() {
-        assert_eq!(names(None).vrr_in(&[]), Vrr::OnDemand);
-        assert_eq!(names(None).vrr_in(&[setting("DP-1", None)]), Vrr::OnDemand);
+        let monitor = names("DP-1", "DP-1");
+        assert_eq!(vrr_of(&monitor, &Compositor::default()), Vrr::OnDemand);
+        assert_eq!(
+            vrr_of(&monitor, &with_outputs(vec![setting("DP-1", None)])),
+            Vrr::OnDemand
+        );
     }
 
     #[test]
     fn every_mode_round_trips_through_the_file() {
-        let monitor = names(Some("Dell U2720Q 7XYZ"));
+        let monitor = names("DP-1", IDENTITY);
         for mode in VRR_MODES.values() {
-            let mut outputs = vec![setting("HDMI-A-1", Some(Vrr::On))];
-            monitor.set_vrr_in(&mut outputs, mode);
+            let mut written = with_outputs(vec![setting("HDMI-A-1", Some(Vrr::On))]);
+            monitor.entry(&mut written).vrr = Some(mode);
 
-            let written = Compositor {
-                outputs,
-                ..Compositor::default()
-            };
             let text = written.get_ron("outputs").expect("serialises");
             let mut parsed = Compositor::default();
             parsed.set_ron("outputs", &text).expect("deserialises");
 
-            assert_eq!(monitor.vrr_in(&parsed.outputs), mode);
+            assert_eq!(vrr_of(&monitor, &parsed), mode);
             assert_eq!(
                 parsed.outputs[0].vrr,
                 Some(Vrr::On),
@@ -153,23 +112,23 @@ mod tests {
     }
 
     #[test]
-    fn a_new_entry_is_filed_under_the_edid_name() {
-        let mut outputs = Vec::new();
-        names(Some("Dell U2720Q 7XYZ")).set_vrr_in(&mut outputs, Vrr::OnDemand);
-        assert_eq!(outputs, [setting("Dell U2720Q 7XYZ", Some(Vrr::OnDemand))]);
+    fn a_new_entry_is_filed_under_the_identity() {
+        let mut compositor = Compositor::default();
+        names("DP-1", IDENTITY).entry(&mut compositor).vrr = Some(Vrr::OnDemand);
+        assert_eq!(compositor.outputs, [setting(IDENTITY, Some(Vrr::OnDemand))]);
     }
 
     #[test]
     fn the_connector_entry_wins_like_it_does_in_the_compositor() {
-        let mut outputs = vec![
-            setting("Dell U2720Q 7XYZ", Some(Vrr::On)),
+        let mut compositor = with_outputs(vec![
+            setting(IDENTITY, Some(Vrr::On)),
             setting("DP-1", Some(Vrr::Off)),
-        ];
-        let monitor = names(Some("Dell U2720Q 7XYZ"));
-        assert_eq!(monitor.vrr_in(&outputs), Vrr::Off);
+        ]);
+        let monitor = names("DP-1", IDENTITY);
+        assert_eq!(vrr_of(&monitor, &compositor), Vrr::Off);
 
-        monitor.set_vrr_in(&mut outputs, Vrr::OnDemand);
-        assert_eq!(outputs[1].vrr, Some(Vrr::OnDemand));
-        assert_eq!(outputs[0].vrr, Some(Vrr::On));
+        monitor.entry(&mut compositor).vrr = Some(Vrr::OnDemand);
+        assert_eq!(compositor.outputs[1].vrr, Some(Vrr::OnDemand));
+        assert_eq!(compositor.outputs[0].vrr, Some(Vrr::On));
     }
 }

@@ -96,6 +96,9 @@ tokio = { version = "1", default-features = false, features = [
 # window, because the protocol is a session-wide conversation about every
 # monitor rather than anything to do with this app's surface.
 wayland-client = "0.31"
+# The compositor's identity, primary flag and capabilities for each monitor,
+# and its brightness, for the Display page.
+crownos-protocols = { path = "../crownos-protocols", features = ["client"] }
 wayland-protocols-wlr = { version = "0.3", default-features = false, features = [
   "client",
 ] }
