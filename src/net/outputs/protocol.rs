@@ -129,13 +129,11 @@ impl Session {
         drafts: &[MonitorDraft],
         test_only: bool,
         report: &impl Fn(OutputEvent),
-    ) -> Result<(), DispatchError> {
+    ) -> Result<Outcome, DispatchError> {
         let Some(serial) = self.state.serial else {
-            report(OutputEvent::Result {
-                outcome: Outcome::Failed("the compositor has not described its outputs yet".into()),
-                test: test_only,
-            });
-            return Ok(());
+            return Ok(Outcome::Failed(
+                "the compositor has not described its outputs yet".into(),
+            ));
         };
 
         let qh = self.queue.handle();
@@ -174,19 +172,15 @@ impl Session {
         }
 
         self.state.outcome = None;
-        while self.state.outcome.is_none() {
+        let outcome = loop {
             self.pump().await?;
             self.report_snapshot(report);
-        }
+            if let Some(outcome) = self.state.outcome.take() {
+                break outcome;
+            }
+        };
         configuration.destroy();
-
-        if let Some(outcome) = self.state.outcome.take() {
-            report(OutputEvent::Result {
-                outcome,
-                test: test_only,
-            });
-        }
-        Ok(())
+        Ok(outcome)
     }
 
     fn report_snapshot(&mut self, report: &impl Fn(OutputEvent)) {

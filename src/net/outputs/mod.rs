@@ -37,16 +37,16 @@ mod brightness;
 mod info;
 mod monitor;
 mod protocol;
+mod rollback;
 mod wl_outputs;
+mod worker;
 
 use std::time::Duration;
 
 use crownui::prelude::{Cx, Signal};
-use tokio::select;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::time::{Instant, sleep_until};
+use tokio::sync::mpsc::UnboundedSender;
 
-use crate::util::worker::{MessageProxy, spawn_worker};
+use crate::util::worker::spawn_worker;
 pub use monitor::{
     Brightness, BrightnessControl, InfoState, Mode, Monitor, MonitorDraft, Rect, Transform, beside,
     bounds, intersects, logical_size,
@@ -66,6 +66,26 @@ pub enum Outcome {
     Failed(String),
     /// The monitors changed while the configuration was in flight.
     Cancelled,
+}
+
+/// What a configuration was sent for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    /// Only checked; nothing changed.
+    Test,
+    /// The user's drafts; kept only once confirmed.
+    Apply,
+    /// The arrangement from before the last apply, put back.
+    Revert,
+}
+
+/// Where an apply is in its two steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Confirmation {
+    /// Sent; the compositor has not answered yet.
+    Awaiting,
+    /// Applied, and put back unless kept in time.
+    Countdown { seconds_left: u64 },
 }
 
 /// Everything the page can ask of this backend.
@@ -92,11 +112,9 @@ pub enum OutputCommand {
 pub enum OutputEvent {
     /// The monitors, as they are now.
     Snapshot(Vec<Monitor>),
-    /// A configuration finished. `test` says which kind it was, because the
-    /// two failures mean different things: a refused *apply* leaves the
-    /// drafts stale and they go back, while a refused *test* is the user
-    /// halfway through an edit and must not have their work undone.
-    Result { outcome: Outcome, test: bool },
+    /// A configuration finished. A refusal never undoes the drafts: the
+    /// arrangement on screen did not change, so the user can fix the edit.
+    Result { outcome: Outcome, purpose: Purpose },
     /// The countdown expired and the previous arrangement was put back.
     Reverted,
     /// There will be no monitors: no compositor, or no support for this.
@@ -118,8 +136,8 @@ pub struct OutputState {
     pub drafts: Vec<MonitorDraft>,
     /// Which monitor's settings are on screen.
     pub selected: Option<String>,
-    /// The arrangement to put back if the current one is not confirmed.
-    pub pending_revert: Option<Vec<MonitorDraft>>,
+    /// Set from Apply until the arrangement is kept, refused or put back.
+    pub confirmation: Option<Confirmation>,
     /// Why there are no monitors, when that is the situation.
     pub unavailable: Option<String>,
     /// The last failure, until the user does something else.
@@ -170,40 +188,35 @@ impl OutputState {
                 self.loaded = true;
                 self.unavailable = None;
             }
-            OutputEvent::Result {
-                outcome: Outcome::Succeeded,
-                ..
-            } => self.error = None,
-            OutputEvent::Result {
-                outcome: Outcome::Failed(reason),
-                test: true,
-            } => self.error = Some(reason),
+            OutputEvent::Result { outcome, purpose } => self.finish(outcome, purpose),
             OutputEvent::Reverted => {
-                self.pending_revert = None;
+                self.confirmation = None;
                 self.reset_drafts();
                 self.error =
                     Some("The display settings were not confirmed, so they were reverted.".into());
-            }
-            OutputEvent::Result {
-                outcome: Outcome::Failed(reason),
-                test: false,
-            } => {
-                self.error = Some(reason);
-                self.pending_revert = None;
-                self.reset_drafts();
-            }
-            OutputEvent::Result {
-                outcome: Outcome::Cancelled,
-                ..
-            } => {
-                self.error = Some("The monitors changed; try again.".into());
-                self.pending_revert = None;
-                self.reset_drafts();
             }
             OutputEvent::Unavailable(reason) => {
                 self.unavailable = Some(reason);
                 self.loaded = true;
             }
+        }
+    }
+
+    fn finish(&mut self, outcome: Outcome, purpose: Purpose) {
+        let succeeded = outcome == Outcome::Succeeded;
+        self.error = match outcome {
+            Outcome::Succeeded => None,
+            Outcome::Failed(reason) => Some(reason),
+            Outcome::Cancelled => Some("The monitors changed; try again.".into()),
+        };
+        match purpose {
+            Purpose::Test => {}
+            Purpose::Apply if succeeded => {
+                self.confirmation = Some(Confirmation::Countdown {
+                    seconds_left: REVERT_AFTER.as_secs(),
+                });
+            }
+            Purpose::Apply | Purpose::Revert => self.confirmation = None,
         }
     }
 
@@ -373,27 +386,26 @@ impl OutputState {
         self.send(OutputCommand::Test(drafts));
     }
 
-    /// Applies the drafts, remembering what to go back to.
+    /// Applies the drafts, telling the backend what to go back to.
     pub fn apply(&mut self) {
-        let previous: Vec<MonitorDraft> = self.monitors.iter().map(Monitor::to_draft).collect();
-        self.pending_revert = Some(previous.clone());
+        let previous = self.monitors.iter().map(Monitor::to_draft).collect();
+        self.confirmation = Some(Confirmation::Awaiting);
         let drafts = self.drafts.clone();
         self.send(OutputCommand::Apply { drafts, previous });
     }
 
     /// Keeps the arrangement that was applied.
     pub fn confirm(&mut self) {
-        self.pending_revert = None;
+        self.confirmation = None;
         self.send(OutputCommand::Confirm);
     }
 
-    /// Puts back what was there before the last apply.
+    /// Puts back what was there before the last apply. The snapshot that
+    /// follows brings the drafts back with it.
     pub fn revert(&mut self) {
-        let Some(previous) = self.pending_revert.take() else {
-            return;
-        };
-        self.drafts = previous;
-        self.send(OutputCommand::Revert);
+        if self.confirmation.take().is_some() {
+            self.send(OutputCommand::Revert);
+        }
     }
 }
 
@@ -402,110 +414,16 @@ impl OutputState {
 /// Nothing is mirrored into a RON file: the compositor persists the
 /// arrangement itself, and a copy here would be a second source of truth.
 pub fn output_worker(cx: &mut Cx, outputs: Signal<OutputState>) {
-    let sender = spawn_worker(cx, run, move |cx, event| {
+    let sender = spawn_worker(cx, worker::run, move |cx, event| {
         outputs.update(cx, |state| state.apply_event(event));
     });
     outputs.update(cx, |state| state.attach(sender));
 }
 
-/// The page's last word when the conversation ends, whatever ended it.
-fn gone(err: &impl std::fmt::Display) -> String {
-    format!("the compositor stopped talking to us: {err}")
-}
-
-/// The one loop: the compositor's events, the page's commands, and the
-/// countdown that undoes an arrangement nobody confirmed.
-///
-/// The countdown lives here rather than in the page for the reason it exists
-/// at all — a bad arrangement can leave the user unable to click anything, so
-/// the rollback must not depend on the interface still working.
-///
-/// Commands are taken first, because a `select!` that preferred the socket
-/// would leave an apply waiting behind an unrelated hotplug.
-async fn run(proxy: MessageProxy<OutputEvent>, mut commands: UnboundedReceiver<OutputCommand>) {
-    let report = move |event| {
-        // The window has gone; the loop ends on its next turn either way.
-        let _ = proxy.message(event);
-    };
-
-    let mut session = match protocol::Session::connect() {
-        Ok(session) => session,
-        Err(reason) => {
-            report(OutputEvent::Unavailable(reason));
-            return;
-        }
-    };
-
-    /// What woke the loop up.
-    enum Woken {
-        Command(OutputCommand),
-        /// Nobody confirmed the last arrangement.
-        Expired,
-        /// The compositor said something, which `dispatch` has dealt with.
-        Compositor,
-    }
-
-    // What to put back, and when to give up waiting for a confirmation.
-    let mut rollback: Option<(Vec<MonitorDraft>, Instant)> = None;
-
-    loop {
-        let deadline = rollback.as_ref().map(|(_, at)| *at);
-
-        let woken = select! {
-            biased;
-            command = commands.recv() => match command {
-                Some(command) => Woken::Command(command),
-                None => return,
-            },
-            () = sleep_until(deadline.unwrap_or_else(Instant::now)), if deadline.is_some() => {
-                Woken::Expired
-            }
-            result = session.dispatch(&report) => {
-                if let Err(err) = result {
-                    report(OutputEvent::Unavailable(gone(&err)));
-                    return;
-                }
-                Woken::Compositor
-            }
-        };
-
-        let expired = matches!(woken, Woken::Expired);
-        let configuration = match woken {
-            Woken::Compositor => None,
-            Woken::Expired => rollback.take().map(|(previous, _)| (previous, false)),
-            Woken::Command(OutputCommand::Test(drafts)) => Some((drafts, true)),
-            Woken::Command(OutputCommand::Apply { drafts, previous }) => {
-                rollback = Some((previous, Instant::now() + REVERT_AFTER));
-                Some((drafts, false))
-            }
-            Woken::Command(OutputCommand::Confirm) => {
-                rollback = None;
-                None
-            }
-            Woken::Command(OutputCommand::Revert) => {
-                rollback.take().map(|(previous, _)| (previous, false))
-            }
-            Woken::Command(OutputCommand::SetBrightness { name, level }) => {
-                session.set_brightness(&name, level);
-                None
-            }
-        };
-
-        let Some((drafts, test_only)) = configuration else {
-            continue;
-        };
-        if let Err(err) = session.configure(&drafts, test_only, &report).await {
-            report(OutputEvent::Unavailable(gone(&err)));
-            return;
-        }
-        if expired {
-            report(OutputEvent::Reverted);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+
     use super::*;
 
     fn monitor(name: &str, position: (i32, i32)) -> Monitor {
@@ -586,18 +504,66 @@ mod tests {
         assert_eq!(state.selected.as_deref(), Some("DP-1"));
     }
 
-    #[test]
-    fn a_failed_configuration_puts_the_drafts_back() {
-        let mut state = loaded(vec![monitor("DP-1", (0, 0))]);
-        state.edit("DP-1", |draft| draft.scale = 4.0);
-        state.apply_event(OutputEvent::Result {
-            outcome: Outcome::Failed("nope".into()),
-            test: false,
-        });
+    fn attached(state: &mut OutputState) -> UnboundedReceiver<OutputCommand> {
+        let (sender, receiver) = unbounded_channel();
+        state.attach(sender);
+        receiver
+    }
 
-        assert!(!state.is_dirty(), "a refused change must not stay pending");
-        assert_eq!(state.error.as_deref(), Some("nope"));
-        assert!(state.pending_revert.is_none());
+    fn sent(commands: &mut UnboundedReceiver<OutputCommand>) -> Vec<OutputCommand> {
+        std::iter::from_fn(|| commands.try_recv().ok()).collect()
+    }
+
+    fn applied(outcome: Outcome) -> OutputEvent {
+        OutputEvent::Result {
+            outcome,
+            purpose: Purpose::Apply,
+        }
+    }
+
+    #[test]
+    fn an_applied_arrangement_asks_to_be_kept() {
+        let mut state = loaded(vec![monitor("DP-1", (0, 0))]);
+        state.edit("DP-1", |draft| draft.scale = 1.0);
+        state.apply();
+        assert_eq!(state.confirmation, Some(Confirmation::Awaiting));
+
+        state.apply_event(applied(Outcome::Succeeded));
+        assert_eq!(
+            state.confirmation,
+            Some(Confirmation::Countdown {
+                seconds_left: REVERT_AFTER.as_secs()
+            })
+        );
+        assert_eq!(state.error, None);
+    }
+
+    #[test]
+    fn a_refused_apply_shows_the_refusal_keeps_the_drafts_and_reverts_nothing() {
+        for refusal in [
+            Outcome::Failed("head winit-1 has no such mode".into()),
+            Outcome::Cancelled,
+        ] {
+            let mut state = loaded(vec![monitor("DP-1", (0, 0))]);
+            let mut commands = attached(&mut state);
+            state.edit("DP-1", |draft| draft.scale = 1.0);
+            state.apply();
+            state.apply_event(applied(refusal));
+
+            assert!(state.error.is_some(), "the refusal is shown");
+            assert_ne!(
+                state.error.as_deref(),
+                Some("The display settings were not confirmed, so they were reverted.")
+            );
+            assert!(state.is_dirty(), "the drafts stay for the user to fix");
+            assert_eq!(state.confirmation, None, "there is nothing to keep");
+
+            state.revert();
+            assert!(
+                !sent(&mut commands).contains(&OutputCommand::Revert),
+                "nothing was applied, so nothing goes back"
+            );
+        }
     }
 
     #[test]
@@ -606,7 +572,7 @@ mod tests {
         state.edit("DP-1", |draft| draft.scale = 1.0);
         state.apply_event(OutputEvent::Result {
             outcome: Outcome::Failed("they would overlap".into()),
-            test: true,
+            purpose: Purpose::Test,
         });
 
         assert_eq!(state.error.as_deref(), Some("they would overlap"));
@@ -617,14 +583,28 @@ mod tests {
     }
 
     #[test]
+    fn a_successful_revert_does_not_ask_to_be_kept() {
+        let mut state = loaded(vec![monitor("DP-1", (0, 0))]);
+        state.apply();
+        state.apply_event(applied(Outcome::Succeeded));
+        state.revert();
+        state.apply_event(OutputEvent::Result {
+            outcome: Outcome::Succeeded,
+            purpose: Purpose::Revert,
+        });
+        assert_eq!(state.confirmation, None);
+    }
+
+    #[test]
     fn an_expired_countdown_puts_everything_back_and_says_so() {
         let mut state = loaded(vec![monitor("DP-1", (0, 0))]);
         state.edit("DP-1", |draft| draft.scale = 1.0);
         state.apply();
+        state.apply_event(applied(Outcome::Succeeded));
 
         state.apply_event(OutputEvent::Reverted);
         assert!(!state.is_dirty(), "the drafts go back to what is real");
-        assert!(state.pending_revert.is_none());
+        assert_eq!(state.confirmation, None);
         assert!(
             state.error.is_some(),
             "the user is told why it changed back"
@@ -632,23 +612,25 @@ mod tests {
     }
 
     #[test]
-    fn reverting_restores_what_was_there_before() {
+    fn reverting_asks_the_backend_to_put_the_old_arrangement_back() {
         let mut state = loaded(vec![monitor("DP-1", (0, 0))]);
+        let mut commands = attached(&mut state);
         state.edit("DP-1", |draft| draft.scale = 1.0);
         state.apply();
-        assert!(state.pending_revert.is_some());
+        state.apply_event(applied(Outcome::Succeeded));
 
         state.revert();
-        assert_eq!(state.draft("DP-1").map(|draft| draft.scale), Some(2.0));
-        assert!(state.pending_revert.is_none());
+        assert_eq!(sent(&mut commands).last(), Some(&OutputCommand::Revert));
+        assert_eq!(state.confirmation, None);
     }
 
     #[test]
     fn confirming_drops_the_rollback() {
         let mut state = loaded(vec![monitor("DP-1", (0, 0))]);
         state.apply();
+        state.apply_event(applied(Outcome::Succeeded));
         state.confirm();
-        assert!(state.pending_revert.is_none());
+        assert_eq!(state.confirmation, None);
     }
 
     #[test]

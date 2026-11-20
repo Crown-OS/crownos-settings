@@ -11,6 +11,7 @@ use crowntest::{Role, role};
 use super::{LOCK_SCREEN, open_page, ordinal, page_view};
 use crate::fixtures::{CPU_GRAPH, SECURED_NETWORK, logs_of, populate_all};
 use crate::net::crownlink::{PairingInvite, PairingSession};
+use crate::net::outputs::{Confirmation, REVERT_AFTER};
 use crate::pages;
 use crate::session::Window;
 use crate::util::qr::QrMatrix;
@@ -81,7 +82,9 @@ pub fn capture(carrier: &mut Carrier) -> Result<()> {
     let mut window = Window::open(ordinal("Display"), |cx, store| {
         populate_all(cx, store);
         store.outputs.update(cx, |outputs| {
-            outputs.pending_revert = Some(outputs.drafts.clone());
+            outputs.confirmation = Some(Confirmation::Countdown {
+                seconds_left: REVERT_AFTER.as_secs(),
+            });
         });
     })?;
     carrier.capture_state(

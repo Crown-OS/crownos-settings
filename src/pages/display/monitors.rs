@@ -11,7 +11,7 @@ use super::{arrangement, status_row};
 use crate::layout::{
     optional, setting_row_content, setting_row_desc, settings_card_titled, value_text, when,
 };
-use crate::net::outputs::{Monitor, MonitorDraft, OutputState, REVERT_AFTER};
+use crate::net::outputs::{Confirmation, Monitor, MonitorDraft, OutputState, REVERT_AFTER};
 use crate::state::Store;
 use crate::util::bridge::{bridge, derived};
 
@@ -126,7 +126,11 @@ fn summary(monitor: &Monitor, draft: Option<&MonitorDraft>) -> String {
 /// "Keep these display settings?", shown while a countdown is running.
 fn confirm_actions(outputs: Signal<OutputState>) -> impl View {
     when(
-        move |runtime| outputs.with(runtime, |outputs| outputs.pending_revert.is_some()),
+        move |runtime| {
+            outputs.with(runtime, |outputs| {
+                matches!(outputs.confirmation, Some(Confirmation::Countdown { .. }))
+            })
+        },
         move |_| {
             // The window is named rather than counted down: what the user has
             // to know is that doing nothing is safe, not how many seconds are
@@ -144,13 +148,14 @@ fn confirm_actions(outputs: Signal<OutputState>) -> impl View {
     )
 }
 
-/// Hidden while a confirmation is outstanding: applying on top of an
-/// unconfirmed change would leave nothing sane to revert to.
+/// Hidden from Apply until the arrangement is kept, refused or put back:
+/// applying on top of an unconfirmed change would leave nothing sane to
+/// revert to.
 fn apply_actions(outputs: Signal<OutputState>) -> impl View {
     when(
         move |runtime| {
             outputs.with(runtime, |outputs| {
-                outputs.pending_revert.is_none() && outputs.is_dirty()
+                outputs.confirmation.is_none() && outputs.is_dirty()
             })
         },
         move |_| {
