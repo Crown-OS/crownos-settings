@@ -1,12 +1,13 @@
 //! The Input page: everything that turns a person into text.
 //!
-//! Today that is dictation and nothing else, which is why the page is one card.
+//! Today that is dictation and the keyboard layout swap, each in its own card.
 //! It is filed as *Input* rather than as *Dictation* for the same reason
 //! `input.ron` is — the page is the home for text entry generally.
 //!
 //! Everything on it writes straight to `input.ron`, and crowndictator follows
 //! that file live: the toggle releases its keyboard grab, the shortcut re-arms
 //! it, and the device is picked up at the start of the next recording.
+//! crownpositor follows the same file live for the Caps Lock and Escape swap.
 
 use crownos_config::schema::input;
 use crownui::kit::{StatusOptions, Tone, icons, status};
@@ -26,7 +27,7 @@ pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Input",
     slug: "input",
     icon: icons::MIC,
-    keywords: &["dictation", "microphone"],
+    keywords: &["dictation", "microphone", "keyboard", "caps lock", "escape"],
     build,
 };
 
@@ -55,58 +56,71 @@ fn build(cx: &mut Cx, store: Store) -> AnyView {
 
     page(
         &PAGE,
-        (settings_card_titled(
-            "Dictation",
-            (
-                setting_row_desc(
-                    "Dictation",
-                    "Hold the shortcut anywhere to speak, release to type what you said",
-                    switch(cx, store, input::DictationEnabled),
-                ),
-                settings_divider(),
-                setting_row_icon(glyph(icons::MIC), "Microphone source", microphone),
-                settings_divider(),
-                setting_row_desc(
-                    "Shortcut",
-                    "Click, then press the keys you want to hold",
-                    keybind(cx, store, input::DictationHotkey).disabled(disabled()),
-                ),
-                // A cleared shortcut leaves the feature on with no way to
-                // reach it — worth saying, because the rest of the card looks
-                // perfectly healthy.
-                when(
-                    move |runtime| {
-                        enabled(runtime) && store.get(runtime, input::DictationHotkey).is_empty()
-                    },
-                    |_| warning("No shortcut is set, so dictation cannot be started".to_owned()),
-                ),
-                // A microphone that has since been unplugged is still what the
-                // user asked for, so it is not silently rewritten — but
-                // recording falls back to the default until it is back.
-                optional(
-                    move |runtime| {
-                        if !enabled(runtime) {
-                            return None;
-                        }
-                        let chosen = store.get(runtime, input::DictationMicrophone);
-                        store.microphones.with(runtime, |microphones| {
-                            missing_microphone(chosen, microphones)
-                        })
-                    },
-                    |_, missing| {
-                        warning(format!(
-                            "“{missing}” isn't connected — recording uses the default microphone until it is"
-                        ))
-                    },
-                ),
-                settings_divider(),
-                setting_row_desc(
-                    "Use GPU acceleration",
-                    "Falls back to the processor when no supported GPU is available",
-                    switch(cx, store, input::DictationGpu).disabled(disabled()),
+        (
+            settings_card_titled(
+                "Dictation",
+                (
+                    setting_row_desc(
+                        "Dictation",
+                        "Hold the shortcut anywhere to speak, release to type what you said",
+                        switch(cx, store, input::DictationEnabled),
+                    ),
+                    settings_divider(),
+                    setting_row_icon(glyph(icons::MIC), "Microphone source", microphone),
+                    settings_divider(),
+                    setting_row_desc(
+                        "Shortcut",
+                        "Click, then press the keys you want to hold",
+                        keybind(cx, store, input::DictationHotkey).disabled(disabled()),
+                    ),
+                    // A cleared shortcut leaves the feature on with no way to
+                    // reach it — worth saying, because the rest of the card looks
+                    // perfectly healthy.
+                    when(
+                        move |runtime| {
+                            enabled(runtime)
+                                && store.get(runtime, input::DictationHotkey).is_empty()
+                        },
+                        |_| {
+                            warning("No shortcut is set, so dictation cannot be started".to_owned())
+                        },
+                    ),
+                    // A microphone that has since been unplugged is still what the
+                    // user asked for, so it is not silently rewritten — but
+                    // recording falls back to the default until it is back.
+                    optional(
+                        move |runtime| {
+                            if !enabled(runtime) {
+                                return None;
+                            }
+                            let chosen = store.get(runtime, input::DictationMicrophone);
+                            store.microphones.with(runtime, |microphones| {
+                                missing_microphone(chosen, microphones)
+                            })
+                        },
+                        |_, missing| {
+                            warning(format!(
+                                "“{missing}” isn't connected — recording uses the default microphone until it is"
+                            ))
+                        },
+                    ),
+                    settings_divider(),
+                    setting_row_desc(
+                        "Use GPU acceleration",
+                        "Falls back to the processor when no supported GPU is available",
+                        switch(cx, store, input::DictationGpu).disabled(disabled()),
+                    ),
                 ),
             ),
-        ),),
+            settings_card_titled(
+                "Keyboard",
+                setting_row_desc(
+                    "Swap Caps Lock and Escape",
+                    "Makes the Caps Lock key act as Escape and the Escape key act as Caps Lock",
+                    switch(cx, store, input::SwapCapsAndEsc),
+                ),
+            ),
+        ),
     )
 }
 
