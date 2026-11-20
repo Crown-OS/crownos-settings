@@ -10,8 +10,8 @@ use std::path::Path;
 
 use anyhow::Result;
 use crownos_config::system::{
-    Browser, DeveloperTool, PLAYWRIGHT_MCP_SERVER, SetupConfig, SetupConfigError, SetupStateError,
-    SetupTask, TaskState, TaskStatus,
+    Browser, DeveloperTool, MAX_TASK_ATTEMPTS, PLAYWRIGHT_MCP_SERVER, SetupConfig,
+    SetupConfigError, SetupStateError, SetupTask, TaskState, TaskStatus,
 };
 
 use crate::util::pkexec::{AdminAction, run_as_admin};
@@ -80,7 +80,7 @@ impl SetupStatus {
             .any(|tool| !self.is_tool_installed(tool));
         self.tasks
             .iter()
-            .any(|(_, state)| state.status != TaskStatus::Done)
+            .any(|(_, state)| state.status != TaskStatus::Done && !state.gave_up())
             || unstarted(SetupTask::Browser, !self.browser_installed)
             || unstarted(SetupTask::DeveloperTools, tools_missing)
             || unstarted(
@@ -93,6 +93,10 @@ impl SetupStatus {
         self.tasks
             .iter()
             .find_map(|(candidate, state)| (*candidate == task).then_some(state))
+    }
+
+    fn gave_up(&self, task: SetupTask) -> bool {
+        self.task(task).is_some_and(TaskState::gave_up)
     }
 
     fn task_status(&self, task: SetupTask) -> Option<&TaskStatus> {
@@ -111,7 +115,9 @@ pub fn browser_line(status: &SetupStatus) -> String {
         status.task_status(SetupTask::Browser),
         status.browser_installed,
     ) {
-        (Some(TaskStatus::Failed { message }), _) => return failed(message),
+        (Some(TaskStatus::Failed { message }), _) => {
+            return failed(status.gave_up(SetupTask::Browser), message);
+        }
         (Some(TaskStatus::Running), _) => SETTING_UP,
         (Some(TaskStatus::Pending), _) => WAITING_FOR_NETWORK,
         (None, false) if status.runner_available => WAITING_FOR_NETWORK,
@@ -132,7 +138,9 @@ pub fn tool_line(status: &SetupStatus, tool: DeveloperTool) -> String {
         installed,
         status.task_status(SetupTask::DeveloperTools),
     ) {
-        (true, false, Some(TaskStatus::Failed { message })) => return failed(message),
+        (true, false, Some(TaskStatus::Failed { message })) => {
+            return failed(status.gave_up(SetupTask::DeveloperTools), message);
+        }
         (true, false, Some(TaskStatus::Running)) => "Installing in the background",
         (true, false, Some(TaskStatus::Pending)) => WAITING_FOR_NETWORK,
         (true, false, None) if status.runner_available => WAITING_FOR_NETWORK,
@@ -152,7 +160,9 @@ pub fn playwright_line(status: &SetupStatus) -> String {
         status.task_status(SetupTask::Playwright),
         status.playwright_installed,
     ) {
-        (Some(TaskStatus::Failed { message }), _) => return failed(message),
+        (Some(TaskStatus::Failed { message }), _) => {
+            return failed(status.gave_up(SetupTask::Playwright), message);
+        }
         (Some(TaskStatus::Running), _) => SETTING_UP,
         (Some(TaskStatus::Pending), _) => WAITING_FOR_NETWORK,
         (None, false) if status.runner_available => WAITING_FOR_NETWORK,
@@ -169,7 +179,7 @@ pub fn task_line(state: &TaskState) -> String {
         TaskStatus::Pending => "Waiting".to_owned(),
         TaskStatus::Running => "Running".to_owned(),
         TaskStatus::Done => "Done".to_owned(),
-        TaskStatus::Failed { message } => failed(message),
+        TaskStatus::Failed { message } => failed(state.gave_up(), message),
     }
 }
 
@@ -206,8 +216,14 @@ pub fn tasks_unchanged(before: &SetupStatus, after: &SetupStatus) -> bool {
     before.tasks == after.tasks
 }
 
-fn failed(message: &str) -> String {
-    format!("Failed: {message}")
+/// The runner retries a failed task until it gave up after
+/// [`MAX_TASK_ATTEMPTS`] attempts.
+fn failed(gave_up: bool, message: &str) -> String {
+    if gave_up {
+        format!("Failed after {MAX_TASK_ATTEMPTS} attempts: {message}")
+    } else {
+        format!("Failed: {message}")
+    }
 }
 
 fn config_error_detail(error: &SetupConfigError) -> String {
@@ -248,6 +264,7 @@ mod tests {
             generation: 1,
             started_at_unix: None,
             finished_at_unix: None,
+            attempts: 1,
         }
     }
 
@@ -423,6 +440,23 @@ mod tests {
 
         after.tasks[0].1.generation += 1;
         assert!(!tasks_unchanged(&before, &after));
+    }
+
+    #[test]
+    fn a_task_that_gave_up_is_settled_and_says_so() {
+        let mut status = system(&[(SetupTask::Browser, failure())]);
+        status.browser_installed = true;
+        status.playwright_installed = true;
+        assert!(status.is_busy(), "the runner retries the task");
+        assert_eq!(browser_line(&status), "Failed: no network");
+
+        status.tasks[0].1.attempts = MAX_TASK_ATTEMPTS;
+        assert!(!status.is_busy());
+        assert_eq!(browser_line(&status), "Failed after 3 attempts: no network");
+        assert_eq!(
+            task_line(&status.tasks[0].1),
+            "Failed after 3 attempts: no network"
+        );
     }
 
     #[test]
