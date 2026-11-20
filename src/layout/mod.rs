@@ -6,6 +6,7 @@
 
 mod card;
 mod conditional;
+mod failure;
 mod list;
 mod page;
 mod row;
@@ -13,6 +14,7 @@ mod text;
 
 pub use card::{settings_card, settings_card_titled, settings_divider};
 pub use conditional::{nothing, optional, when};
+pub use failure::dismissible_failure;
 pub use list::{Listed, hairline_unless_first, listed};
 pub use page::{card_stack, settings_page};
 pub use row::{

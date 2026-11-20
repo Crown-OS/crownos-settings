@@ -16,6 +16,7 @@ pub mod markdown;
 pub mod os_release;
 pub mod persist;
 pub mod pixmap;
+pub mod pkexec;
 pub mod qr;
 pub mod signal;
 pub mod texture;

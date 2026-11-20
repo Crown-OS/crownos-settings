@@ -6,14 +6,13 @@
 
 use std::process::Command;
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
+
+use crate::util::pkexec::run_as_admin;
 
 /// Run through `pkexec` to change anything; its polkit action is
 /// `org.crownos.memory.manage`.
 const HELPER: &str = "/usr/bin/crownos-memory";
-const HELPER_NAME: &str = "crownos-memory: ";
-/// pkexec's exit statuses for a dismissed or refused password prompt.
-const PKEXEC_DECLINED: [i32; 2] = [126, 127];
 const MIB_PER_GIB: u64 = 1024;
 
 pub const ZRAM_PERCENT_MIN: u32 = 10;
@@ -89,30 +88,16 @@ impl Resize {
             ],
         }
     }
-
-    fn run(self) -> Result<()> {
-        let output = Command::new("pkexec")
-            .arg(HELPER)
-            .args(self.args())
-            .output()
-            .context("couldn't ask for your password")?;
-        let declined = output
-            .status
-            .code()
-            .is_some_and(|code| PKEXEC_DECLINED.contains(&code));
-        if output.status.success() || declined {
-            return Ok(());
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let reason = stderr.lines().last().unwrap_or("the change failed");
-        bail!("{}", reason.trim_start_matches(HELPER_NAME))
-    }
 }
 
 /// Asks for `change`; a dismissed password prompt changes nothing and is not
 /// an error.
 pub async fn resize(change: Resize) -> Result<()> {
-    tokio::task::spawn_blocking(move || change.run()).await?
+    tokio::task::spawn_blocking(move || {
+        let args = change.args();
+        run_as_admin(HELPER, &args.each_ref().map(String::as_str)).map(drop)
+    })
+    .await?
 }
 
 #[cfg(test)]

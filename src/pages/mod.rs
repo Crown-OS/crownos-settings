@@ -23,6 +23,7 @@ mod performance;
 mod plugins;
 mod power;
 mod screenshot;
+mod setup;
 mod sound;
 mod updates;
 mod voice;
@@ -94,6 +95,8 @@ pub static GROUPS: &[PageGroup] = &[
             notifications::PAGE,
             screenshot::PAGE,
             windows_apps::PAGE,
+            setup::BROWSER_PAGE,
+            setup::DEVELOPER_TOOLS_PAGE,
             performance::PAGE,
             power::PAGE,
             updates::PAGE,

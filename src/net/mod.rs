@@ -42,6 +42,7 @@ pub mod memory;
 pub mod outputs;
 pub mod plugins;
 pub mod session;
+pub mod setup;
 pub mod updates;
 pub mod voice;
 pub mod wallpaper;

@@ -1,17 +1,14 @@
 //! The Performance page: how much memory zram compresses into, and how big
 //! the swap partition behind it is.
 
-use crownui::kit::{
-    ButtonKind, ButtonOptions, ButtonSize, ButtonVariant, StatusOptions, Tone, button, icons,
-    spinner, status,
-};
+use crownui::kit::{ButtonKind, ButtonOptions, ButtonSize, ButtonVariant, button, icons, spinner};
 use crownui::prelude::{
     AnyView, Cx, Element, Listeners, Runtime, Semantic, Signal, Styled, View, bind, spacer, vstack,
 };
 
 use crate::controls::stepped_slider;
 use crate::layout::{
-    body_text, nothing, optional, setting_row_content, setting_row_desc, settings_card,
+    body_text, dismissible_failure, nothing, optional, setting_row_content, setting_row_desc,
     settings_card_titled, settings_divider, spread, when,
 };
 use crate::net::memory::{
@@ -80,10 +77,7 @@ fn build(cx: &mut Cx, _store: Store) -> AnyView {
                 move |runtime| applier.memory.get(runtime),
                 move |cx, now| memory_card(cx, now, applier),
             ),
-            optional(
-                move |runtime| applier.failure.get(runtime),
-                move |_, message| failure_card(applier, message),
-            ),
+            dismissible_failure(applier.failure),
         ),
     )
 }
@@ -200,13 +194,4 @@ fn row_button(label: &'static str, variant: ButtonVariant) -> Element<ButtonKind
 
 fn unavailable(title: &'static str, reason: &'static str) -> impl View {
     setting_row_desc(title, reason, nothing())
-}
-
-fn failure_card(applier: Applier, message: String) -> impl View {
-    settings_card((setting_row_content(spread((
-        status(message).tone(Tone::Danger),
-        spacer(),
-        row_button("Dismiss", ButtonVariant::Ghost)
-            .on_click(move |cx, _| applier.failure.set(cx, None)),
-    ))),))
 }

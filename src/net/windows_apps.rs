@@ -5,7 +5,8 @@
 //! outcome from the filesystem rather than following the install.
 
 use std::path::Path;
-use std::process::Command;
+
+use crate::util::pkexec::run_as_admin;
 
 /// Present while the service is enabled, which is what "on" means.
 const ENABLED_LINK: &str =
@@ -39,8 +40,6 @@ impl WindowsApps {
 /// unchanged when the user dismisses the password prompt.
 pub async fn request(on: bool) -> WindowsApps {
     let action = if on { "on" } else { "off" };
-    let _ =
-        tokio::task::spawn_blocking(move || Command::new("pkexec").args([HELPER, action]).status())
-            .await;
+    let _ = tokio::task::spawn_blocking(move || run_as_admin(HELPER, &[action])).await;
     WindowsApps::current()
 }
