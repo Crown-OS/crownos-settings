@@ -3,7 +3,7 @@
 
 use crownos_config::schema::context_access::{AskOnFirstUse, HostDefault, SandboxedDefault};
 use crownos_config::schema::{
-    AppKey, ContextAccess, Expiry, FirstUsePolicy, Grant, Scope, allowed_scopes,
+    AppKey, ContextAccess, Expiry, FirstUsePolicy, Scope, ScopeSet, allowed_scopes,
 };
 use crownui::kit::{
     ButtonOptions, ButtonVariant, CalloutOptions, TextInputOptions, Tone, button, callout, icons,
@@ -15,8 +15,8 @@ use crownui::prelude::{
 
 use crate::controls::{Options, choice, field_text, switch};
 use crate::layout::{
-    body_text, card_stack, dismissible_failure, nothing, setting_row, setting_row_content,
-    setting_row_desc, settings_card_titled, settings_divider,
+    body_text, card_stack, dismissible_failure, nothing, paragraph, setting_row,
+    setting_row_content, setting_row_desc, settings_card, settings_card_titled, settings_divider,
 };
 use crate::pages::{PageDescriptor, page};
 use crate::state::Store;
@@ -68,6 +68,10 @@ fn build(cx: &mut Cx, store: Store) -> AnyView {
         &PAGE,
         (
             broken_file_notice(),
+            settings_card(setting_row_content(paragraph(
+                "For apps that are not sandboxed, this is a consent choice. Such apps can \
+                 still read the screen in other ways. Sandboxed apps are enforced.",
+            ))),
             settings_card_titled(
                 "When an app asks",
                 (
@@ -175,14 +179,16 @@ fn program_key(typed: &str) -> Result<AppKey, String> {
 /// Gives `key` the window list, unless it already has a grant, and lets it
 /// out of the refused list.
 fn add_grant(runtime: &mut Runtime, store: Store, key: &AppKey) {
-    let text = key.to_string();
-    store.update::<ContextAccess>(runtime, |access| {
-        access.denied.retain(|denied| *denied != text);
-        access.grants.entry(text.clone()).or_insert_with(|| Grant {
-            scopes: vec![Scope::Metadata],
-            expires: Expiry::Never,
-        });
-    });
+    store.update::<ContextAccess>(runtime, |access| add_app(access, key));
+}
+
+/// Gives a new app the window list through [`ContextAccess::grant`], so a
+/// program the user can change gets it for this session only. An app with a
+/// grant keeps it.
+fn add_app(access: &mut ContextAccess, key: &AppKey) {
+    if !access.grants.contains_key(&key.to_string()) {
+        access.grant(key, ScopeSet::EMPTY.with(Scope::Metadata), Expiry::Never);
+    }
 }
 
 /// Why `scope` cannot be given to the app at `key`, if it cannot.
@@ -191,13 +197,11 @@ fn not_allowed_reason(key: &str, scope: Scope) -> Option<&'static str> {
     if allowed_scopes(&key).contains(scope) {
         return None;
     }
-    Some(
-        if scope == Scope::Engine && matches!(key, AppKey::HostExecutable { .. }) {
-            "Only crown-contextd runs the engine"
-        } else {
-            "Not for programs that can be changed without root"
-        },
-    )
+    Some(if scope == Scope::Engine {
+        "Only crown-contextd runs the engine"
+    } else {
+        "Not for programs that can be changed without root"
+    })
 }
 
 /// One card per app with a grant, rebuilt when an app comes or goes.
@@ -347,19 +351,8 @@ fn lifetime(store: Store, key: &str, cx: &mut Cx) -> String {
 
 /// The name the user knows an app by: its app id, program or script.
 fn app_name(key: &str) -> String {
-    let file_name = |path: &std::path::Path| {
-        path.file_name().map_or_else(
-            || key.to_owned(),
-            |name| name.to_string_lossy().into_owned(),
-        )
-    };
-    match key.parse::<AppKey>() {
-        Ok(AppKey::Sandboxed { app_id, .. }) => app_id,
-        Ok(AppKey::Spawned { component }) => component,
-        Ok(AppKey::HostExecutable { path }) => file_name(&path),
-        Ok(AppKey::Interpreted { script, .. }) => file_name(&script),
-        Err(_) => key.to_owned(),
-    }
+    key.parse::<AppKey>()
+        .map_or_else(|_| key.to_owned(), |key| key.display_name())
 }
 
 #[cfg(test)]
@@ -392,6 +385,27 @@ mod tests {
     }
 
     #[test]
+    fn an_added_app_follows_the_session_only_rules() {
+        let script = AppKey::Interpreted {
+            interpreter: "/usr/bin/python3".into(),
+            script: "/srv/bot.py".into(),
+        };
+        let mut access = ContextAccess::default();
+        access.denied.push(script.to_string());
+        add_app(&mut access, &script);
+        let grant = &access.grants[&script.to_string()];
+        assert_eq!(grant.scopes, [Scope::Metadata]);
+        assert!(matches!(grant.expires, Expiry::Session(_)));
+        assert!(access.denied.is_empty());
+
+        if let Some(grant) = access.grants.get_mut(&script.to_string()) {
+            grant.scopes.push(Scope::Text);
+        }
+        add_app(&mut access, &script);
+        assert_eq!(access.grants[&script.to_string()].scopes.len(), 2, "kept");
+    }
+
+    #[test]
     fn programs_the_user_can_change_cannot_be_added_by_path() {
         assert!(program_key("relative/path").is_err());
         assert!(program_key("/no/such/program").is_err());
@@ -411,7 +425,7 @@ mod tests {
         assert_eq!(not_allowed_reason(script, Scope::Text), None);
         assert_eq!(
             not_allowed_reason("sandbox:flatpak/org.example.Notes", Scope::Engine),
-            None
+            Some("Only crown-contextd runs the engine")
         );
     }
 

@@ -14,7 +14,9 @@ pub struct DesktopApp {
 }
 
 /// Every visible application entry under the XDG data directories whose
-/// program can be found and keyed, by name.
+/// program can be found and keyed, by name. A system entry wins over a
+/// user's own entry with the same name, which any program of the user can
+/// write.
 pub fn installed_desktop_apps() -> Vec<DesktopApp> {
     let mut by_name = BTreeMap::new();
     for directory in application_directories() {
@@ -47,9 +49,10 @@ fn application_directories() -> Vec<PathBuf> {
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
     let data_dirs =
         std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".to_owned());
-    data_home
-        .into_iter()
-        .chain(data_dirs.split(':').map(PathBuf::from))
+    data_dirs
+        .split(':')
+        .map(PathBuf::from)
+        .chain(data_home)
         .map(|directory| directory.join("applications"))
         .collect()
 }
@@ -66,6 +69,7 @@ fn parse_desktop_entry(text: &str, path: &[PathBuf]) -> Option<DesktopApp> {
     let mut in_main_group = false;
     let mut name = None;
     let mut exec = None;
+    let mut flatpak = None;
     for line in text.lines().map(str::trim) {
         if line.starts_with('[') {
             in_main_group = line == "[Desktop Entry]";
@@ -80,10 +84,20 @@ fn parse_desktop_entry(text: &str, path: &[PathBuf]) -> Option<DesktopApp> {
         match field.trim() {
             "Name" => name = Some(value.trim().to_owned()),
             "Exec" => exec = Some(value.trim().to_owned()),
+            "X-Flatpak" => flatpak = Some(value.trim().to_owned()),
             "Type" if value.trim() != "Application" => return None,
             "NoDisplay" | "Hidden" if value.trim() == "true" => return None,
             _ => {}
         }
+    }
+    if let Some(app_id) = flatpak.filter(|app_id| !app_id.is_empty()) {
+        return Some(DesktopApp {
+            name: name?,
+            key: AppKey::Sandboxed {
+                engine: "flatpak".to_owned(),
+                app_id,
+            },
+        });
     }
     let arguments: Vec<String> = exec?
         .split_whitespace()
@@ -119,6 +133,20 @@ mod tests {
         assert_eq!(
             app.as_ref().map(|app| app.name.as_str()),
             Some("Environment")
+        );
+    }
+
+    #[test]
+    fn a_flatpak_entry_is_keyed_by_its_app_id() {
+        let entry = "[Desktop Entry]\nType=Application\nName=Notes\n\
+                     Exec=/usr/bin/flatpak run org.example.Notes\nX-Flatpak=org.example.Notes\n";
+        let app = parse_desktop_entry(entry, &[]);
+        assert_eq!(
+            app.map(|app| app.key),
+            Some(AppKey::Sandboxed {
+                engine: "flatpak".to_owned(),
+                app_id: "org.example.Notes".to_owned()
+            })
         );
     }
 
