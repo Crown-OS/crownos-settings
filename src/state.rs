@@ -129,6 +129,21 @@ impl Store {
         self.config.update(runtime, edit);
     }
 
+    /// Reads a whole section, tracked. See [`Settings::with_section`].
+    pub fn with_section<S: Section, R>(
+        self,
+        runtime: &mut Runtime,
+        read: impl FnOnce(&S) -> R,
+    ) -> R {
+        self.config.with_section(runtime, read)
+    }
+
+    /// Sets a section without writing it, for tests that show a state.
+    #[cfg(test)]
+    pub fn seed<S: Section>(self, runtime: &mut Runtime, value: S) {
+        self.config.seed(runtime, value);
+    }
+
     /// Write one key and persist its section. See [`Settings::set`].
     pub fn set<K: Key>(self, runtime: &mut Runtime, key: K, value: K::Value)
     where

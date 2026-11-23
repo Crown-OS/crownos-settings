@@ -23,8 +23,8 @@ use std::fmt::Debug;
 use crownconfig::{SectionWatch, watch_section};
 use crownos_config::Key;
 use crownos_config::schema::{
-    Appearance, Bluetooth, Compositor, Display, Glass, Input, Keybinds, Lock, Notifications, Power,
-    Screenshot, Sound, Theme, Voice, Wifi,
+    Agents, Appearance, Bluetooth, Compositor, ContextAccess, Display, Glass, Input, Keybinds,
+    Lock, Notifications, Power, Screenshot, Sound, Theme, VisualContext, Voice, Wifi,
 };
 use crownui::prelude::{Cx, Runtime, Signal};
 use serde::Serialize;
@@ -85,6 +85,21 @@ impl Settings {
             persist::save(S::NAME, next.clone());
             slot.set(runtime, next);
         }
+    }
+
+    /// Reads a whole section, tracked.
+    pub fn with_section<S: Section, R>(
+        self,
+        runtime: &mut Runtime,
+        read: impl FnOnce(&S) -> R,
+    ) -> R {
+        S::slot(self).with(runtime, read)
+    }
+
+    /// Sets a section without writing it, for tests that show a state.
+    #[cfg(test)]
+    pub fn seed<S: Section>(self, runtime: &mut Runtime, value: S) {
+        Self::adopt(S::slot(self), runtime, value);
     }
 
     /// Take a value that *came from* disk, without writing it back.
@@ -185,6 +200,9 @@ sections! {
     theme: Theme,
     screenshot: Screenshot,
     compositor: Compositor,
+    agents: Agents,
+    visual_context: VisualContext,
+    context_access: ContextAccess,
 }
 
 #[cfg(test)]

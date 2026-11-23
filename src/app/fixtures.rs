@@ -20,11 +20,14 @@ use crate::net::voice::VoiceService;
 use crate::net::wallpaper::{Thumbnail, WallpaperEntry};
 use crate::net::wifi::{ActiveWifi, KnownNetwork, LinkState, OtherNetwork, WifiSnapshot};
 use crate::state::Store;
+use crownos_config::schema::{ContextAccess, Expiry, Grant, Scope};
+use std::collections::BTreeMap;
 
 /// Every backend as if it had spoken: networks with a prompt open, a
 /// gallery of thumbnails, a monitor picked, a paired phone, two microphones
 /// and crown-voiced enhancing on the CPU.
 pub(super) fn populate(cx: &mut Cx, store: Store) {
+    store.seed(cx, sample_context_access());
     store.wifi.update(cx, |wifi| {
         wifi.snapshot = Some(WifiSnapshot {
             radio_enabled: true,
@@ -335,4 +338,36 @@ fn populate_updates(cx: &mut Cx, store: Store) {
         updates.link = UpdatesLink::Online;
         updates.snapshot = Some(snapshot);
     });
+}
+
+/// Two apps with access, one of them for this session only, and one the user
+/// refused.
+fn sample_context_access() -> ContextAccess {
+    let grant = |scopes: &[Scope], expires: Expiry| Grant {
+        scopes: scopes.to_vec(),
+        expires,
+    };
+    ContextAccess {
+        grants: BTreeMap::from([
+            (
+                "exe:/usr/bin/crownos-computer-use".to_owned(),
+                grant(
+                    &[
+                        Scope::Metadata,
+                        Scope::Text,
+                        Scope::Pause,
+                        Scope::WaylandWindowControl,
+                        Scope::WaylandAgentCursor,
+                    ],
+                    Expiry::Never,
+                ),
+            ),
+            (
+                "sandbox:flatpak/org.example.Notes".to_owned(),
+                grant(&[Scope::Metadata], Expiry::Session("boot".to_owned())),
+            ),
+        ]),
+        denied: vec!["exe:/home/user/.local/bin/scraper".to_owned()],
+        ..ContextAccess::default()
+    }
 }

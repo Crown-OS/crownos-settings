@@ -613,3 +613,35 @@ fn the_keep_prompt_counts_down() {
     }
     assert!(app.exists(role(Role::Button).name("Keep")));
 }
+
+#[test]
+fn app_access_lists_grants_and_revoking_moves_an_app_to_the_refused_list() {
+    let mut app = window(ordinal_of("App Access"), true);
+    app.settle();
+    let revoke = role(Role::Button).name("Revoke access for crownos-computer-use");
+    assert!(app.exists(revoke.clone()), "{}", app.semantics_snapshot());
+    assert!(app.exists(role(Role::Button).name("Revoke access for org.example.Notes")));
+    assert!(app.exists(role(Role::Button).name("Let scraper ask again")));
+
+    app.click(revoke);
+    app.settle();
+    assert!(
+        app.exists(role(Role::Button).name("Let crownos-computer-use ask again")),
+        "{}",
+        app.semantics_snapshot()
+    );
+    assert!(!app.exists(role(Role::Button).name("Revoke access for crownos-computer-use")));
+}
+
+#[test]
+fn screen_context_lists_the_excluded_apps() {
+    let mut app = window(ordinal_of("Screen Context"), false);
+    app.settle();
+    for app_id in ["org.keepassxc.KeePassXC", "bitwarden"] {
+        assert!(
+            app.exists(role(Role::Button).name(format!("Remove {app_id}"))),
+            "{}",
+            app.semantics_snapshot()
+        );
+    }
+}

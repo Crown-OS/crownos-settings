@@ -22,6 +22,7 @@ mod notifications;
 mod performance;
 mod plugins;
 mod power;
+mod privacy;
 mod screenshot;
 mod setup;
 mod sound;
@@ -87,6 +88,10 @@ pub static GROUPS: &[PageGroup] = &[
             voice::PAGE,
             input::PAGE,
         ],
+    },
+    PageGroup {
+        label: "Privacy",
+        pages: &[privacy::SCREEN_CONTEXT_PAGE, privacy::APP_ACCESS_PAGE],
     },
     PageGroup {
         label: "System",

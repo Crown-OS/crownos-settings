@@ -18,6 +18,7 @@ mod keybind;
 mod options;
 mod segments;
 mod slider;
+mod string_list;
 mod switch;
 mod text;
 
@@ -26,5 +27,6 @@ pub use keybind::keybind;
 pub use options::Options;
 pub use segments::{apart, exact, segments};
 pub use slider::{fraction_slider, percent_slider, stepped_slider};
+pub use string_list::string_list;
 pub use switch::{switch, switch_then};
 pub use text::field_text;
