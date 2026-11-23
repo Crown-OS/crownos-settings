@@ -2,18 +2,30 @@
 //! and what happens when an app asks for the first time.
 
 use crownos_config::schema::context_access::{AskOnFirstUse, HostDefault, SandboxedDefault};
-use crownos_config::schema::{AppKey, ContextAccess, Expiry, FirstUsePolicy, Scope};
-use crownui::kit::{ButtonOptions, ButtonVariant, button, icons, toggle};
-use crownui::prelude::{AnyView, Cx, Listeners, Semantic, View, keyed, vstack};
+use crownos_config::schema::{
+    AppKey, ContextAccess, Expiry, FirstUsePolicy, Grant, Scope, allowed_scopes,
+};
+use crownui::kit::{
+    ButtonOptions, ButtonVariant, CalloutOptions, TextInputOptions, Tone, button, callout, icons,
+    select, toggle,
+};
+use crownui::prelude::{
+    AnyView, Cx, Listeners, Runtime, Semantic, Signal, Styled, View, hstack, keyed, vstack,
+};
 
-use crate::controls::{Options, choice, switch};
+use crate::controls::{Options, choice, field_text, switch};
 use crate::layout::{
-    body_text, card_stack, setting_row, setting_row_content, setting_row_desc,
-    settings_card_titled, settings_divider,
+    body_text, card_stack, dismissible_failure, nothing, setting_row, setting_row_content,
+    setting_row_desc, settings_card_titled, settings_divider,
 };
 use crate::pages::{PageDescriptor, page};
 use crate::state::Store;
 use crate::util::bridge::bridge;
+use crate::util::desktop_apps::installed_desktop_apps;
+use crate::util::strict_section::problem_with;
+
+const PATH_WIDTH: f32 = 320.0;
+const CONTROL_GAP: f32 = 8.0;
 
 static FIRST_USE: Options<FirstUsePolicy> = Options::new(&[
     ("Ask", FirstUsePolicy::Ask),
@@ -51,9 +63,11 @@ pub const PAGE: PageDescriptor = PageDescriptor {
 };
 
 fn build(cx: &mut Cx, store: Store) -> AnyView {
+    let failure = cx.signal(None);
     page(
         &PAGE,
         (
+            broken_file_notice(),
             settings_card_titled(
                 "When an app asks",
                 (
@@ -74,9 +88,115 @@ fn build(cx: &mut Cx, store: Store) -> AnyView {
                     ),
                 ),
             ),
+            add_app_card(cx, store, failure),
+            dismissible_failure(failure),
             granted_apps(store),
             refused_apps(store),
         ),
+    )
+}
+
+/// A warning while `context_access.ron` does not parse; nothing is saved then.
+fn broken_file_notice() -> AnyView {
+    match problem_with::<ContextAccess>(ContextAccess::SECTION) {
+        Some(problem) => callout(Tone::Warning, "context_access.ron does not parse")
+            .body(format!(
+                "Fix the file by hand; changes here are not saved until then. {problem}"
+            ))
+            .icon(icons::TRIANGLE_ALERT)
+            .boxed(),
+        None => nothing().boxed(),
+    }
+}
+
+/// Gives an app the window list before it asks: an installed app picked by
+/// name, or a program that only root can change, by path.
+fn add_app_card(cx: &mut Cx, store: Store, failure: Signal<Option<String>>) -> AnyView {
+    let apps = installed_desktop_apps();
+    let names = cx.signal(apps.iter().map(|app| app.name.clone()).collect::<Vec<_>>());
+    let picked = cx.signal(None);
+    let add_picked = button("Add")
+        .label("Add the picked app")
+        .on_click(move |cx, _| {
+            let Some(app) = picked.get(cx).and_then(|index: usize| apps.get(index)) else {
+                return;
+            };
+            add_grant(cx, store, &app.key);
+        });
+    let by_path = field_text(
+        cx,
+        move |runtime| {
+            let _ = store.with_section(runtime, |access: &ContextAccess| access.grants.len());
+            String::new()
+        },
+        move |runtime, typed| match program_key(typed.trim()) {
+            Ok(key) => {
+                add_grant(runtime, store, &key);
+                failure.set(runtime, None);
+            }
+            Err(problem) => failure.set(runtime, Some(problem)),
+        },
+    )
+    .placeholder("/usr/bin/program")
+    .width(PATH_WIDTH);
+    settings_card_titled(
+        "Add an app",
+        (
+            setting_row(
+                "Installed app",
+                hstack((select(names, picked), add_picked)).gap(CONTROL_GAP),
+            ),
+            settings_divider(),
+            setting_row_desc("Program", "A program only root can change", by_path),
+        ),
+    )
+    .boxed()
+}
+
+/// The key of a program the user typed: an absolute path to a file that
+/// only root can change.
+fn program_key(typed: &str) -> Result<AppKey, String> {
+    let path = std::path::Path::new(typed);
+    if !path.is_absolute() || !path.is_file() {
+        return Err(format!("{typed} is not a program"));
+    }
+    let key = AppKey::HostExecutable {
+        path: path.to_path_buf(),
+    };
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    if key.is_session_only(home.as_deref()) {
+        return Err(format!(
+            "{typed} can be changed without root, so it can only be allowed when it asks"
+        ));
+    }
+    Ok(key)
+}
+
+/// Gives `key` the window list, unless it already has a grant, and lets it
+/// out of the refused list.
+fn add_grant(runtime: &mut Runtime, store: Store, key: &AppKey) {
+    let text = key.to_string();
+    store.update::<ContextAccess>(runtime, |access| {
+        access.denied.retain(|denied| *denied != text);
+        access.grants.entry(text.clone()).or_insert_with(|| Grant {
+            scopes: vec![Scope::Metadata],
+            expires: Expiry::Never,
+        });
+    });
+}
+
+/// Why `scope` cannot be given to the app at `key`, if it cannot.
+fn not_allowed_reason(key: &str, scope: Scope) -> Option<&'static str> {
+    let key = key.parse::<AppKey>().ok()?;
+    if allowed_scopes(&key).contains(scope) {
+        return None;
+    }
+    Some(
+        if scope == Scope::Engine && matches!(key, AppKey::HostExecutable { .. }) {
+            "Only crown-contextd runs the engine"
+        } else {
+            "Not for programs that can be changed without root"
+        },
     )
 }
 
@@ -117,7 +237,11 @@ fn app_card(cx: &mut Cx, store: Store, key: &str) -> AnyView {
     ];
     for (scope, label) in SCOPES {
         rows.push(settings_divider().boxed());
-        rows.push(setting_row(label, toggle(scope_switch(cx, store, key, scope))).boxed());
+        let switch = toggle(scope_switch(cx, store, key, scope));
+        rows.push(match not_allowed_reason(key, scope) {
+            Some(reason) => setting_row_desc(label, reason, switch.disabled(true)).boxed(),
+            None => setting_row(label, switch).boxed(),
+        });
     }
     settings_card_titled(&app_name(key), rows).boxed()
 }
@@ -265,6 +389,30 @@ mod tests {
         refuse(&mut access, key);
         assert!(access.grants.is_empty());
         assert_eq!(access.denied, [key]);
+    }
+
+    #[test]
+    fn programs_the_user_can_change_cannot_be_added_by_path() {
+        assert!(program_key("relative/path").is_err());
+        assert!(program_key("/no/such/program").is_err());
+        let temporary = std::env::temp_dir().join(format!("crownsettings-{}", std::process::id()));
+        let _ = std::fs::write(&temporary, b"");
+        assert!(program_key(&temporary.display().to_string()).is_err());
+        let _ = std::fs::remove_file(&temporary);
+    }
+
+    #[test]
+    fn scopes_a_key_cannot_hold_say_why() {
+        let script = "interp:/usr/bin/python3:/srv/bot.py";
+        assert_eq!(
+            not_allowed_reason(script, Scope::Raw),
+            Some("Not for programs that can be changed without root")
+        );
+        assert_eq!(not_allowed_reason(script, Scope::Text), None);
+        assert_eq!(
+            not_allowed_reason("sandbox:flatpak/org.example.Notes", Scope::Engine),
+            None
+        );
     }
 
     #[test]

@@ -30,7 +30,7 @@ use crownui::prelude::{Cx, Runtime, Signal};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::util::persist;
+use crate::util::{persist, strict_section};
 
 // --- MARK: Section ---
 
@@ -82,6 +82,11 @@ impl Settings {
         let mut next = slot.with_untracked(runtime, Clone::clone);
         edit(&mut next);
         if slot.with_untracked(runtime, |current| *current != next) {
+            if strict_section::is_strict(S::NAME)
+                && strict_section::problem_with::<S>(S::NAME).is_some()
+            {
+                return;
+            }
             persist::save(S::NAME, next.clone());
             slot.set(runtime, next);
         }
@@ -149,7 +154,7 @@ macro_rules! sections {
             /// all of these RON files on disk.
             pub fn load(runtime: &mut Runtime) -> Self {
                 Self {
-                    $($field: runtime.signal(crownos_config::load::<$ty>(<$ty as Section>::NAME)),)+
+                    $($field: runtime.signal(crate::util::strict_section::load_section::<$ty>(<$ty as Section>::NAME)),)+
                 }
             }
 
