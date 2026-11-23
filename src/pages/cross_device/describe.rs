@@ -174,6 +174,16 @@ pub const fn feature_copy(feature: Feature) -> FeatureCopy {
             "Links",
             "Open links from one device on the other",
         ),
+        Feature::RemoteInput => (
+            icons::KEYBOARD,
+            "Remote input",
+            "Let its pointer and keys control this computer during a shared screen",
+        ),
+        Feature::DeviceControl => (
+            icons::LOCK,
+            "Device control",
+            "Let it lock this computer, change the volume and play or pause media",
+        ),
     };
     FeatureCopy {
         glyph,
