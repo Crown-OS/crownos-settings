@@ -5,16 +5,12 @@
 //! that feature instead — dictation's push-to-talk chord is on the Input page,
 //! because it is meaningless with dictation switched off.
 //!
-//! Everything on it writes straight to `keybinds.ron`.
-//!
-//! # The compositor is the consumer, and it does not read this yet
-//!
-//! Only the compositor can honour a global chord: every other CrownOS app is a
-//! Wayland client and sees keys just while it is focused. crownpositor still
-//! takes its shortcuts from cosmic's own store and has not been pointed at this
-//! file, so rebinding here is recorded but not yet acted on. The page is
-//! deliberately silent about that: it is a wiring gap on the way to being
-//! closed, not something the user can do anything about.
+//! Everything on it writes straight to `keybinds.ron`. The compositor reads
+//! that file live: it gives application actions the chords set here, and it
+//! keeps the launchpad chord free of application shortcuts.
+
+mod applications;
+mod user_chords;
 
 use crownos_config::schema::keybinds;
 use crownui::kit::{StatusOptions, Tone, icons, status};
@@ -26,6 +22,7 @@ use crate::layout::{
 };
 use crate::pages::{PageDescriptor, page};
 use crate::state::Store;
+use applications::applications_card;
 
 pub const PAGE: PageDescriptor = PageDescriptor {
     title: "Keybinds",
@@ -38,20 +35,21 @@ pub const PAGE: PageDescriptor = PageDescriptor {
 fn build(cx: &mut Cx, store: Store) -> AnyView {
     page(
         &PAGE,
-        (settings_card_titled(
-            "Launchpad",
-            (
-                setting_row_desc(
-                    "Show the launchpad",
-                    "Press it once to open, again to close",
-                    keybind(cx, store, keybinds::Launcher),
-                ),
-                // The row above looks perfectly healthy when it is empty, so
-                // the consequence has to be said out loud.
-                when(
-                    move |runtime| store.get(runtime, keybinds::Launcher).is_empty(),
-                    |_| {
-                        vstack((
+        (
+            settings_card_titled(
+                "Launchpad",
+                (
+                    setting_row_desc(
+                        "Show the launchpad",
+                        "Press it once to open, again to close",
+                        keybind(cx, store, keybinds::Launcher),
+                    ),
+                    // The row above looks perfectly healthy when it is empty, so
+                    // the consequence has to be said out loud.
+                    when(
+                        move |runtime| store.get(runtime, keybinds::Launcher).is_empty(),
+                        |_| {
+                            vstack((
                             settings_divider(),
                             setting_row_content(
                                 status(
@@ -60,9 +58,11 @@ fn build(cx: &mut Cx, store: Store) -> AnyView {
                                 .tone(Tone::Warning),
                             ),
                         ))
-                    },
+                        },
+                    ),
                 ),
             ),
-        ),),
+            applications_card(cx, store),
+        ),
     )
 }

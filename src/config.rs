@@ -23,8 +23,8 @@ use std::fmt::Debug;
 use crownconfig::{SectionWatch, watch_section};
 use crownos_config::Key;
 use crownos_config::schema::{
-    Agents, Appearance, Bluetooth, Compositor, ContextAccess, Display, Glass, Input, Keybinds,
-    Lock, Notifications, Power, Screenshot, Sound, Theme, VisualContext, Voice, Wifi,
+    Agents, AppActions, Appearance, Bluetooth, Compositor, ContextAccess, Display, Glass, Input,
+    Keybinds, Lock, Notifications, Power, Screenshot, Sound, Theme, VisualContext, Voice, Wifi,
 };
 use crownui::prelude::{Cx, Runtime, Signal};
 use serde::Serialize;
@@ -208,6 +208,7 @@ sections! {
     agents: Agents,
     visual_context: VisualContext,
     context_access: ContextAccess,
+    app_actions: AppActions,
 }
 
 #[cfg(test)]
@@ -246,6 +247,7 @@ mod tests {
             Keybinds::NAME,
             Notifications::NAME,
             Power::NAME,
+            AppActions::NAME,
         ] {
             assert!(
                 crownos_config::path_for(section).exists(),
