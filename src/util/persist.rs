@@ -32,6 +32,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 /// How long a section's write waits for a better one to replace it.
 ///
@@ -57,7 +58,10 @@ enum Job {
 /// Takes the value rather than a reference because the write happens later, on
 /// another thread: a section is a handful of fields, and one clone per edit is
 /// nothing next to the serialisation it replaces on the UI thread.
-pub fn save<S: Serialize + Send + 'static>(section: &'static str, value: S) {
+pub fn save<S: Serialize + DeserializeOwned + Default + Send + 'static>(
+    section: &'static str,
+    value: S,
+) {
     let Some(writer) = writer() else {
         return write_now(section, &value);
     };
@@ -156,7 +160,7 @@ fn write_all(pending: &mut HashMap<&'static str, Write>) {
 ///
 /// A test only ever writes into a scratch `CROWN_CONFIG_DIR` it chose: one
 /// without would rewrite the user's own settings.
-fn write_now<S: Serialize>(section: &str, value: &S) {
+fn write_now<S: Serialize + DeserializeOwned + Default>(section: &str, value: &S) {
     if cfg!(test) && std::env::var_os(crownos_config::CONFIG_DIR_ENV).is_none() {
         return;
     }
