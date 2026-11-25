@@ -24,7 +24,7 @@ pub fn load_section<T: DeserializeOwned + Serialize + Default>(section: &str) ->
 
 /// Why a strict section's file cannot be used, or `None` when it can. A test
 /// without a scratch `CROWN_CONFIG_DIR` never reads the user's files.
-pub fn problem_with<T: DeserializeOwned + Default>(section: &str) -> Option<String> {
+pub fn problem_with<T: DeserializeOwned + Serialize + Default>(section: &str) -> Option<String> {
     if cfg!(test) && std::env::var_os(crownos_config::CONFIG_DIR_ENV).is_none() {
         return None;
     }
